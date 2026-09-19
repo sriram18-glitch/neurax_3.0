@@ -1,0 +1,18 @@
+# NeuraX backend - runtime dependencies (all except torch/TF already satisfied
+# in the verified global environment; install openpyxl/xlrd only if Excel
+# upload support is required).
+
+fastapi
+uvicorn
+python-multipart
+pandas
+numpy
+scipy
+scikit-learn
+opencv-python
+pillow
+
+# Optional, deliberately not installed yet:
+# openpyxl     -> XLSX upload support
+# xlrd         -> legacy XLS upload support
+# tensorflow   -> vision demo layer (already installed and verified on this machine)

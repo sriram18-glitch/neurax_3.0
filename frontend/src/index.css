@@ -1,0 +1,116 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #07090c;
+  --bg-2: #0a0d12;
+  --panel: 16 20 27;
+  --panel-2: 21 26 34;
+  --line: 148 163 184;
+  --line-2: 148 163 184;
+  --text: #e8edf4;
+  --text-2: #9fb0c3;
+  --text-3: #5f7085;
+  --cyan: 56 214 224;
+  --green: 67 209 122;
+  --amber: 240 180 41;
+  --red: 239 95 107;
+  --violet: 167 139 250;
+  --slate: 100 116 139;
+  --font-sans: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(1200px 600px at 70% -10%, rgba(56, 214, 224, 0.07), transparent 60%),
+    radial-gradient(900px 500px at 10% 110%, rgba(167, 139, 250, 0.05), transparent 60%),
+    linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
+  background-attachment: fixed;
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: rgba(56, 214, 224, 0.28);
+}
+
+:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.25) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@layer components {
+  .panel {
+    border: 1px solid rgb(var(--line) / 0.14);
+    background: rgb(var(--panel) / 0.72);
+    backdrop-filter: blur(14px);
+    @apply shadow-panel;
+  }
+
+  .label {
+    @apply text-2xs font-semibold uppercase tracking-[0.14em] text-ink-3;
+  }
+
+  .mono-value {
+    @apply font-mono tabular-nums tracking-tight;
+  }
+
+  .hairline {
+    border-color: rgb(var(--line) / 0.14);
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1.5 border px-2 py-0.5 text-2xs font-semibold uppercase tracking-[0.1em];
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 border px-3.5 py-2 text-xs font-semibold uppercase tracking-[0.1em] transition-colors duration-150 ease-industrial disabled:cursor-not-allowed disabled:opacity-40;
+  }
+
+  .btn-primary {
+    @apply btn border-cyan/40 bg-cyan/10 text-cyan hover:bg-cyan/20;
+  }
+
+  .btn-ghost {
+    @apply btn border-line text-ink-2 hover:border-line-2 hover:text-ink;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

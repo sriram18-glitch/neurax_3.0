@@ -1,0 +1,41 @@
+# ---------------------------------------------------------------------------
+# NeuraX 3.0 — repository ignores
+# Code and documentation are committed; generated state and large organizer
+# datasets are not (see README for where they live and how to retrain).
+# ---------------------------------------------------------------------------
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
+frontend/.vite/
+
+# Runtime state: trained models, artifacts, sessions, uploads, inspections
+backend/runtime/
+
+# Large organizer datasets (available locally, not committed)
+Model_3.csv
+Manufacturing Data Shared Facility - Discrete-Event Simulation/Model 3/Model_3.csv
+3000Samplesv3.mat
+3000Samplesv3 (1).mat
+Manufacturing Data Shared Facility - Discrete-Event Simulation/3000Samplesv3.mat
+train/
+Matlab Models.zip
+
+# Browser partial downloads
+*.crdownload
+Unconfirmed *
+
+# Misc
+*.log
+.DS_Store
+Thumbs.db
