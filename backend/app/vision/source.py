@@ -148,6 +148,74 @@ def create_demo_source(*, demo_dir: Path, sources_base: Path | None = None, limi
     return record
 
 
+# ---------------------------------------------------------------------------
+# Curated bundled demo sources (for presentations)
+# ---------------------------------------------------------------------------
+
+DEMO_SOURCE_LABELS = {
+    "surface_scratch": "Surface defects — scratch + normal",
+    "hole_normal": "Hole defects — hole + normal",
+    "mixed_review": "Mixed defects + human-review set",
+}
+
+
+def list_bundled_sources(demo_sources_dir: Path) -> list[dict]:
+    """Discover the curated demo datasets configured under DEMO_SOURCES_DIR."""
+    demo_sources_dir = Path(demo_sources_dir)
+    if not demo_sources_dir.exists():
+        return []
+    entries = []
+    for folder in sorted(demo_sources_dir.iterdir()):
+        if not folder.is_dir():
+            continue
+        files = sorted(p for p in folder.rglob("*") if p.is_file() and p.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"})
+        if not files:
+            continue
+        class_counts: dict[str, int] = {}
+        for path in files:
+            parent = path.parent
+            if parent != folder:
+                class_counts[parent.name] = class_counts.get(parent.name, 0) + 1
+        top_level = sum(1 for path in files if path.parent == folder)
+        entries.append(
+            {
+                "name": folder.name,
+                "label": DEMO_SOURCE_LABELS.get(folder.name, folder.name.replace("_", " ")),
+                "image_count": len(files),
+                "classes": sorted(class_counts.keys()),
+                "class_counts": class_counts,
+                "review_images": top_level,
+                "review_note": f"{top_level} top-level image(s) with no class label — unseen-condition samples that trigger human review"
+                if top_level
+                else None,
+            }
+        )
+    return entries
+
+
+def create_bundled_source(name: str, *, demo_sources_dir: Path, sources_base: Path | None = None) -> dict:
+    """Ingest a curated demo dataset by name (path-traversal safe)."""
+    demo_sources_dir = Path(demo_sources_dir)
+    name = str(name)
+    if name in {"", ".", ".."} or "/" in name or "\\" in name or ":" in name:
+        raise SourceError("INVALID_DEMO_SOURCE", f"Invalid demo source name '{name}'.", None)
+    folder = demo_sources_dir / name
+    if not folder.is_dir():
+        raise SourceError("DEMO_SOURCE_NOT_FOUND", f"Bundled demo source '{name}' is not available.", None)
+    uploaded: list[tuple[str, bytes]] = []
+    for path in sorted(folder.rglob("*")):
+        if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}:
+            relative = str(path.relative_to(folder)).replace("\\", "/")
+            uploaded.append((relative, path.read_bytes()))
+    if not uploaded:
+        raise SourceError("DEMO_SOURCE_EMPTY", f"Bundled demo source '{name}' contains no images.", None)
+    record = create_source(uploaded, "BUILT_IN_DEMO", display_name=DEMO_SOURCE_LABELS.get(name, name), sources_base=sources_base)
+    record["demo_source"] = name
+    record["demo_note"] = "BUILT-IN DEMO - curated presentation dataset from the configured demo sources (config-driven, not required by normal use)."
+    _save(record, sources_base)
+    return record
+
+
 def get_source(source_id: str, sources_base: Path | None = None) -> dict | None:
     return _load(source_id, sources_base)
 

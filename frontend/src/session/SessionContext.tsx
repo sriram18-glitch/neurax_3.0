@@ -19,6 +19,7 @@ import type {
   Coverage,
   DatasetContract,
   DatasetListItem,
+  DemoSourceInfo,
   FeatureSpacePayload,
   HumanReviewResponse,
   InspectionSource,
@@ -94,6 +95,7 @@ export interface SessionState {
   sources: SourceSummary[];
   currentSource: InspectionSource | null;
   sourceBusy: boolean;
+  demoSources: DemoSourceInfo[];
 }
 
 const initialState: SessionState = {
@@ -145,6 +147,7 @@ const initialState: SessionState = {
   sources: [],
   currentSource: null,
   sourceBusy: false,
+  demoSources: [],
 };
 
 type Action =
@@ -189,7 +192,8 @@ type Action =
   | { type: "review_action"; response: HumanReviewResponse }
   | { type: "sources"; sources: SourceSummary[] }
   | { type: "current_source"; source: InspectionSource | null }
-  | { type: "source_busy"; busy: boolean };
+  | { type: "source_busy"; busy: boolean }
+  | { type: "demo_sources"; demoSources: DemoSourceInfo[] };
 
 function reducer(state: SessionState, action: Action): SessionState {
   switch (action.type) {
@@ -287,6 +291,8 @@ function reducer(state: SessionState, action: Action): SessionState {
       return { ...state, currentSource: action.source, sourceBusy: false };
     case "source_busy":
       return { ...state, sourceBusy: action.busy };
+    case "demo_sources":
+      return { ...state, demoSources: action.demoSources };
     case "error":
       return { ...state, phase: "error", error: action.error, errorStage: action.stage, busy: null };
     default:
@@ -356,6 +362,9 @@ export interface SessionContextValue extends SessionState {
   refreshSources: () => Promise<void>;
   createSource: (files: File[], sourceType: string, displayName?: string) => Promise<InspectionSource | null>;
   createDemoSource: () => Promise<InspectionSource | null>;
+  createBundledDemoSource: (name: string) => Promise<InspectionSource | null>;
+  demoSources: DemoSourceInfo[];
+  refreshDemoSources: () => Promise<void>;
   changeSource: (sourceId: string) => Promise<void>;
   deleteSource: (sourceId: string) => Promise<void>;
 }
@@ -670,6 +679,34 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
   }, [refreshSources, refreshStream]);
 
+  const createBundledDemoSource = useCallback(
+    async (name: string): Promise<InspectionSource | null> => {
+      dispatch({ type: "source_busy", busy: true });
+      try {
+        const record = await api.createBundledDemoSource(name);
+        dispatch({ type: "batch", batch: record });
+        dispatch({ type: "current_source", source: record });
+        await refreshSources();
+        await refreshStream();
+        return record;
+      } catch (error) {
+        dispatch({ type: "batch_error", error: toApiError(error) });
+        dispatch({ type: "source_busy", busy: false });
+        return null;
+      }
+    },
+    [refreshSources, refreshStream],
+  );
+
+  const refreshDemoSources = useCallback(async () => {
+    try {
+      const list = await api.listDemoSources();
+      dispatch({ type: "demo_sources", demoSources: list.sources });
+    } catch {
+      /* backend offline */
+    }
+  }, []);
+
   const changeSource = useCallback(
     async (sourceId: string): Promise<void> => {
       dispatch({ type: "source_busy", busy: true });
@@ -973,7 +1010,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     void refreshBatches();
     void refreshReview();
     void refreshSources();
-  }, [refreshVision, refreshStream, refreshInvestigations, refreshFeatureSpace, refreshBatches, refreshReview, refreshSources]);
+    void refreshDemoSources();
+  }, [refreshVision, refreshStream, refreshInvestigations, refreshFeatureSpace, refreshBatches, refreshReview, refreshSources, refreshDemoSources]);
 
   const coverage: Coverage | null = state.analysis?.coverage ?? null;
 
@@ -1019,8 +1057,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       refreshSources,
       createSource,
       createDemoSource,
+      createBundledDemoSource,
       changeSource,
       deleteSource,
+      refreshDemoSources,
     }),
     [
       state,
@@ -1062,8 +1102,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       refreshSources,
       createSource,
       createDemoSource,
+      createBundledDemoSource,
       changeSource,
       deleteSource,
+      refreshDemoSources,
     ],
   );
 

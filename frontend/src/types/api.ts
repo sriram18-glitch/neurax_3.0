@@ -997,6 +997,16 @@ export interface StreamSourceInfo {
   labels_available: boolean;
 }
 
+export interface DemoSourceInfo {
+  name: string;
+  label: string;
+  image_count: number;
+  classes: string[];
+  class_counts: Record<string, number>;
+  review_images: number;
+  review_note: string | null;
+}
+
 export interface BatchSummaryListItem {
   batch_id: string;
   created_at: string | null;

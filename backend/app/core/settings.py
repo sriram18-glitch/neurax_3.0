@@ -17,5 +17,10 @@ DEMO_DATASET_DIR = Path(
     os.environ.get("NEURAX_DEMO_DATASET", str(BACKEND_DIR.parent / "train" / "train"))
 )
 VISION_DATASET_DIR = DEMO_DATASET_DIR  # legacy alias (training endpoint default)
+# Curated bundled demo datasets for presentations (scratch / hole / normal /
+# human-review images). Config-driven; normal production use never needs them.
+DEMO_SOURCES_DIR = Path(
+    os.environ.get("NEURAX_DEMO_SOURCES", str(BACKEND_DIR.parent / "demo_sources"))
+)
 RANDOM_SEED = int(os.environ.get("NEURAX_SEED", "42"))
 ARTIFACT_FULL_ROW_CAP = int(os.environ.get("NEURAX_ARTIFACT_ROW_CAP", "250000"))

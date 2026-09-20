@@ -19,6 +19,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.settings import (
     ARTIFACTS_DIR,
     BACKEND_DIR,
+    DEMO_DATASET_DIR,
+    DEMO_SOURCES_DIR,
     IMAGES_DIR,
     MODELS_DIR,
     RUNTIME_DIR,
@@ -51,11 +53,13 @@ from app.vision.source import (
     SourceError,
     SourceStream,
     add_files,
+    create_bundled_source,
     create_demo_source,
     create_source,
     delete_source,
     get_source,
     inspect_source,
+    list_bundled_sources,
     list_sources,
 )
 from app.vision.inference import (
@@ -1227,6 +1231,12 @@ def inspection_sources_list(limit: int = 20) -> dict:
     return {"sources": list_sources(limit=limit), "count": len(list_sources(limit=limit))}
 
 
+@app.get("/api/inspection/sources/demo")
+def inspection_sources_demo() -> dict:
+    """Curated bundled demo datasets (scratch/hole/normal + human-review set)."""
+    return {"sources": list_bundled_sources(DEMO_SOURCES_DIR), "count": len(list_bundled_sources(DEMO_SOURCES_DIR))}
+
+
 @app.get("/api/inspection/sources/current")
 def inspection_sources_current() -> dict:
     record = STREAM.active_source()
@@ -1248,8 +1258,10 @@ async def inspection_sources_create(
     files: list[UploadFile] = File(default=[]),
     source_type: str = Form("IMAGE_SET"),
     display_name: str | None = Form(default=None),
+    demo_source: str | None = Form(default=None),
 ) -> dict:
-    """Ingest user-selected files into a session source (generated ID)."""
+    """Ingest user-selected files into a session source (generated ID), or
+    build a clearly-labelled BUILT_IN_DEMO source from a curated demo dataset."""
     try:
         uploaded: list[tuple[str, bytes]] = []
         for file in files:
@@ -1258,7 +1270,10 @@ async def inspection_sources_create(
             data = await file.read()
             uploaded.append((file.filename, data))
         if source_type == "BUILT_IN_DEMO":
-            record = create_demo_source(demo_dir=DEMO_DATASET_DIR)
+            if demo_source:
+                record = create_bundled_source(demo_source, demo_sources_dir=DEMO_SOURCES_DIR)
+            else:
+                record = create_demo_source(demo_dir=DEMO_DATASET_DIR)
         else:
             record = create_source(uploaded, str(source_type), display_name=display_name)
         return record

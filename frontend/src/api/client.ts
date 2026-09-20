@@ -14,6 +14,7 @@ import type {
   DatasetContract,
   DatasetListItem,
   FeatureSpacePayload,
+  DemoSourceInfo,
   HumanReviewResponse,
   InspectionSource,
   InvestigationRecord,
@@ -308,6 +309,15 @@ export const api = {
     form.append("source_type", "BUILT_IN_DEMO");
     return createSourceUpload(form);
   },
+
+  createBundledDemoSource: (name: string) => {
+    const form = new FormData();
+    form.append("source_type", "BUILT_IN_DEMO");
+    form.append("demo_source", name);
+    return createSourceUpload(form);
+  },
+
+  listDemoSources: () => request<{ sources: DemoSourceInfo[]; count: number }>("/api/inspection/sources/demo"),
 
   sourceStart: (sourceId: string) => request<StreamStatus>(`/api/inspection/sources/${sourceId}/start`, { method: "POST" }),
 
