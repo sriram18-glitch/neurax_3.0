@@ -4,6 +4,7 @@ import { FileUp, FolderOpen, Play, ScanLine, UploadCloud, X } from "lucide-react
 import { useSession } from "../../session/SessionContext";
 import { useBatchPoll } from "../../session/useBatchPoll";
 import { clipboardImageFiles } from "./clipboard";
+import type { InspectionSource } from "../../types/api";
 import type { BatchRecord } from "../../types/api";
 import { DataGap } from "./DataGap";
 import { EvidenceBadge } from "./EvidenceBadge";
@@ -17,11 +18,12 @@ import { BatchGallery } from "./BatchGallery";
  * into a local session source - never a hardcoded dataset path.
  */
 export function BatchPanel({ mode = "image-set" }: { mode?: "image-set" | "folder" }) {
-  const { batch, batchBusy, batchError, createSource, inspectBatch, refreshBatch } = useSession();
+  const { batch, batchBusy, batchError, createSource, inspectBatch, resetBatch, deleteSource } = useSession();
   const [dragging, setDragging] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   useBatchPoll(batch?.status === "inspecting" ? batch.batch_id : null);
+  const batchSource = batch as InspectionSource | null;
 
   const handleFiles = useCallback(
     (list: File[]) => {
@@ -35,9 +37,9 @@ export function BatchPanel({ mode = "image-set" }: { mode?: "image-set" | "folde
   );
 
   // paste support: images copied to the clipboard (e.g. from a file manager
-  // or a screenshot) can be dropped in with Ctrl+V
+  // or a screenshot) can be dropped in with Ctrl+V. Pasting again always
+  // creates a NEW source - add datasets dynamically, any number of times.
   useEffect(() => {
-    if (batch) return;
     const onPaste = (event: ClipboardEvent) => {
       const files = clipboardImageFiles(event);
       if (files.length === 0) return;
@@ -47,7 +49,7 @@ export function BatchPanel({ mode = "image-set" }: { mode?: "image-set" | "folde
     };
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
-  }, [batch, handleFiles]);
+  }, [handleFiles]);
 
   if (!batch) {
     return (
@@ -117,17 +119,32 @@ onDrop={(event) => {
           title="Data health"
           subtitle={batch.batch_id}
           actions={
-            <button
-              type="button"
-              className="btn-ghost !px-2 !py-1"
-              onClick={() => {
-                setFileName(null);
-                void refreshBatch(batch.batch_id);
-              }}
-            >
-              <X size={11} aria-hidden />
-              Re-validate
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                className="btn-ghost !px-2 !py-1"
+                onClick={() => {
+                  setFileName(null);
+                  resetBatch();
+                }}
+              >
+                <FileUp size={11} aria-hidden />
+                Add another
+              </button>
+              <button
+                type="button"
+                className="btn-ghost !px-2 !py-1"
+                onClick={() => {
+                  setFileName(null);
+                  void deleteSource((batchSource as InspectionSource).source_id);
+                  resetBatch();
+                }}
+                title="Remove this source and its ingested files"
+              >
+                <X size={11} aria-hidden />
+                Remove source
+              </button>
+            </div>
           }
         >
           <ValidationReport batch={batch} />
@@ -159,11 +176,11 @@ onDrop={(event) => {
                 className="btn-ghost"
                 onClick={() => {
                   setFileName(null);
-                  void refreshBatch(batch.batch_id);
+                  resetBatch();
                 }}
               >
                 <FileUp size={11} aria-hidden />
-                Add more images
+                Add another set
               </button>
             </div>
           </div>
@@ -203,7 +220,42 @@ onDrop={(event) => {
     );
   }
 
-  return <BatchGallery batch={batch} />;
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 border border-line/60 bg-panel/60 px-3 py-2">
+        <p className="font-mono text-2xs uppercase tracking-[0.1em] text-ink-2">
+          {(batchSource as InspectionSource).type_label ?? "source"} · {(batchSource as InspectionSource).display_name ?? batch.batch_id}
+        </p>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            className="btn-ghost !px-2 !py-1"
+            onClick={() => {
+              setFileName(null);
+              resetBatch();
+            }}
+          >
+            <FileUp size={11} aria-hidden />
+            Inspect another dataset
+          </button>
+          <button
+            type="button"
+            className="btn-ghost !px-2 !py-1"
+            onClick={() => {
+              setFileName(null);
+              void deleteSource((batchSource as InspectionSource).source_id);
+              resetBatch();
+            }}
+            title="Remove this source and its ingested files"
+          >
+            <X size={11} aria-hidden />
+            Remove source
+          </button>
+        </div>
+      </div>
+      <BatchGallery batch={batch} />
+    </div>
+  );
 }
 
 function DecisionCount({ label, value, tone }: { label: string; value: number; tone: string }) {
