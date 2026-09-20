@@ -414,6 +414,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         return api.getBottleneckAnalysis(datasetId, analyses[analyses.length - 1].analysis_id);
       });
       if (bottleneck) dispatch({ type: "bottleneck", bottleneck });
+      else {
+        // automation: no stored analysis - run one so the dataset is instantly ready
+        api.analyzeBottleneck(datasetId)
+          .then((result) => dispatch({ type: "bottleneck", bottleneck: result }))
+          .catch(() => undefined);
+      }
 
       // economics: load whatever the user already supplied (best effort)
       const economics = await Promise.all([
@@ -450,6 +456,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         const [analysis, ml] = await Promise.all([api.getAnalysis(contract.dataset_id), api.getMl(contract.dataset_id)]);
         dispatch({ type: "dataset_loaded", contract, analysis, ml });
         await refreshDatasets();
+        // automation: analyse the new process dataset immediately
+        api.analyzeBottleneck(contract.dataset_id)
+          .then((bottleneck) => dispatch({ type: "bottleneck", bottleneck }))
+          .catch(() => undefined);
       } catch (error) {
         dispatch({ type: "error", error: toApiError(error), stage: "ingestion" });
       } finally {

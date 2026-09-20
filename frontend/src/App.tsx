@@ -345,7 +345,9 @@ function Workspace() {
         }
       />
 
-      {uploadOpen && <UploadModal onClose={() => setUploadOpen(false)} />}
+      {uploadOpen && (
+        <UploadModal onClose={() => setUploadOpen(false)} onUploaded={() => setView("process")} />
+      )}
 
       {addDataOpen && (
         <AddDataModal
@@ -353,6 +355,10 @@ function Workspace() {
           onImage={() => openAddData({ view: "inspection", mode: "single" })}
           onImageSet={() => openAddData({ view: "inspection", mode: "imageset" })}
           onFolder={() => openAddData({ view: "inspection", mode: "folder" })}
+          onProcessData={() => {
+            setAddDataOpen(false);
+            setUploadOpen(true);
+          }}
           onDemoSource={() => {
             setAddDataOpen(false);
             setView("inspection");
@@ -363,7 +369,7 @@ function Workspace() {
   );
 }
 
-function UploadModal({ onClose }: { onClose: () => void }) {
+function UploadModal({ onClose, onUploaded }: { onClose: () => void; onUploaded: () => void }) {
   const { uploadFile, busy } = useSession();
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -381,7 +387,10 @@ function UploadModal({ onClose }: { onClose: () => void }) {
           setDragging(false);
           const file = event.dataTransfer.files?.[0];
           if (file) {
-            void uploadFile(file).then(onClose);
+            void uploadFile(file).then(() => {
+              onClose();
+              onUploaded();
+            });
           }
         }}
       >
@@ -416,7 +425,10 @@ function UploadModal({ onClose }: { onClose: () => void }) {
           onChange={(event) => {
             const file = event.target.files?.[0];
             if (file) {
-              void uploadFile(file).then(onClose);
+              void uploadFile(file).then(() => {
+                onClose();
+                onUploaded();
+              });
             }
             event.target.value = "";
           }}

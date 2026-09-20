@@ -1,10 +1,10 @@
-import { FlaskConical, FolderOpen, ImagePlus, Images, Layers } from "lucide-react";
+import { Database, FlaskConical, FolderOpen, ImagePlus, Images, Layers } from "lucide-react";
 
 import { useSession } from "../../session/SessionContext";
 
 /**
- * Add inspection data: three runtime input types (single image, image set,
- * folder dataset) plus the curated bundled demo datasets. All data is
+ * Add inspection data: three image input types, a process-dataset type for
+ * numbers/text, and the curated bundled demo image datasets. All data is
  * user-selected from any accessible location - never a hardcoded path.
  */
 export function AddDataModal({
@@ -12,12 +12,14 @@ export function AddDataModal({
   onImage,
   onImageSet,
   onFolder,
+  onProcessData,
   onDemoSource,
 }: {
   onClose: () => void;
   onImage: () => void;
   onImageSet: () => void;
   onFolder: () => void;
+  onProcessData: () => void;
   onDemoSource: () => void;
 }) {
   const { demoSources, createBundledDemoSource, sourceBusy } = useSession();
@@ -40,6 +42,12 @@ export function AddDataModal({
       text: "Select an entire folder. Supported images are discovered (class subfolders become labels) and auto-inspected.",
       action: onFolder,
     },
+    {
+      icon: Database,
+      title: "PROCESS DATASET",
+      text: "CSV / MAT / ZIP with numbers or text. NEURAX profiles it and runs the process pipeline automatically: cleaning, ML models, root cause, bottleneck, impact and recommendations.",
+      action: onProcessData,
+    },
   ];
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-6" role="dialog" aria-modal="true" aria-label="Add inspection data">
@@ -50,7 +58,7 @@ export function AddDataModal({
             Close
           </button>
         </div>
-        <div className="grid gap-px bg-line/40 sm:grid-cols-3">
+        <div className="grid gap-px bg-line/40 sm:grid-cols-2 lg:grid-cols-4">
           {options.map(({ icon: Icon, title, text, action }) => (
             <button
               key={title}
