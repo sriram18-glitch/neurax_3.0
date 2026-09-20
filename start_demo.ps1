@@ -65,7 +65,7 @@ if ($Dev) {
 }
 
 Write-Host ""
-Write-Host "CONTROL ROOM:  http://localhost:4173" -ForegroundColor Green
+Write-Host "WORKSTATION:   http://localhost:4173" -ForegroundColor Green
 Write-Host "API:           http://127.0.0.1:8000/api/health" -ForegroundColor Green
 Write-Host ""
 Write-Host "Demo dataset:  Manufacturing Data Shared Facility - Discrete-Event Simulation\Model 1\Model_1.csv"

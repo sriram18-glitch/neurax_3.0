@@ -76,6 +76,8 @@ class VisionModel:
         self.anomaly_threshold = 1.0
         self.class_centroids = None
         self.class_distance_references = None
+        self.feature_space_components = None
+        self.feature_space_mean = None
         self.metadata: dict = {}
         self.metrics: dict = {}
         self._load()
@@ -117,6 +119,27 @@ class VisionModel:
             self.metadata = json.load(handle)
         with open(base / "metrics.json", "r", encoding="utf-8") as handle:
             self.metrics = json.load(handle)
+        feature_space_path = base / "feature_space.npz"
+        if feature_space_path.exists():
+            feature_space = np.load(feature_space_path, allow_pickle=True)
+            self.feature_space_components = feature_space["components"]
+            self.feature_space_mean = feature_space["mean"]
+
+    def project_feature_space(self, standardized: np.ndarray) -> list[float] | None:
+        """Project a standardized embedding into the stored PCA space."""
+        if self.feature_space_components is None or self.feature_space_mean is None:
+            return None
+        centered = standardized - self.feature_space_mean
+        point = centered @ self.feature_space_components.T
+        return [round(float(point[0][0]), 3), round(float(point[0][1]), 3)]
+
+    def feature_space_payload(self) -> dict | None:
+        """The stored reference clouds for the UI scatter (real training data)."""
+        path = self.artifacts_dir / "feature_space.json"
+        if not path.exists():
+            return None
+        with open(path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
 
     def _ensure_feature_model(self):
         if self._feature_model is None:
@@ -133,9 +156,10 @@ class VisionModel:
     # Event-stream pipeline
     # ------------------------------------------------------------------
 
-    def inspect_events(self, image_bytes: bytes, filename: str | None = None) -> Iterator[dict]:
+    def inspect_events(self, image_bytes: bytes, filename: str | None = None, extra: dict | None = None) -> Iterator[dict]:
         """Yield {"event": "stage", "stage": ...} as each real stage completes,
-        then {"event": "result", "result": ...}. Errors yield an error event."""
+        then {"event": "result", "result": ...}. Errors yield an error event.
+        `extra` metadata (e.g. source_id) is merged into the stored result."""
         import tensorflow as tf
 
         if not self.available:
@@ -224,12 +248,15 @@ class VisionModel:
         pooled, conv_features = model(normalized, training=False)
         pooled = np.asarray(pooled)[0]
         conv_map = np.asarray(conv_features)[0]
+        feature_vector = [round(float(value), 3) for value in pooled]
         features = finish(
             feature_stage,
             metrics={
                 "backbone": self.metadata.get("backbone", {}).get("name", "mobilenet_v2"),
                 "embedding_dim": int(pooled.shape[0]),
                 "conv_feature_shape": list(conv_map.shape),
+                "embedding": feature_vector,
+                "note": "The embedding is the real 1280-d backbone output for this image.",
             },
         )
         yield {"event": "stage", "stage": features}
@@ -239,9 +266,11 @@ class VisionModel:
         standardized = self.scaler.transform(pooled[np.newaxis, :])
         logits = self.classifier.decision_function(standardized)[0]
         probabilities = softmax(logits[np.newaxis, :] / self.temperature)[0]
+        raw_probabilities = softmax(logits[np.newaxis, :])[0]
         predicted_index = int(probabilities.argmax())
         predicted_class = self.class_names[predicted_index]
         confidence = float(probabilities[predicted_index])
+        raw_confidence = float(raw_probabilities[predicted_index])
         classified = finish(
             classification,
             metrics={
@@ -262,6 +291,10 @@ class VisionModel:
         class_reference = self.class_distance_references[predicted_index]
         novelty_score = float((class_reference < class_distance).mean())
         novelty_status = "HIGH" if novelty_score > self.thresholds.get("anomaly_review_percentile", 0.99) else "NORMAL"
+        class_distances = {
+            name: round(float(np.linalg.norm(standardized[0] - self.class_centroids[index])), 3)
+            for index, name in enumerate(self.class_names)
+        }
         anomaly = finish(
             anomaly_stage,
             metrics={
@@ -269,6 +302,8 @@ class VisionModel:
                 "anomaly_score": round(anomaly_score, 4),
                 "anomaly_reference": "normal-class training embeddings",
                 "class_distance": round(class_distance, 4),
+                "class_distances": class_distances,
+                "feature_space_point": self.project_feature_space(standardized),
                 "novelty_score": round(novelty_score, 4),
                 "novelty_reference": f"distance distribution of the '{predicted_class}' training class",
                 "note": "Anomaly score is a percentile against the normal reference - not a probability. Novelty compares against the assigned known class.",
@@ -322,19 +357,33 @@ class VisionModel:
         defect_confidence = float(self.thresholds.get("defect_confidence", 0.7))
         anomaly_gate = float(self.thresholds.get("anomaly_review_percentile", 0.99))
         review_reason = None
+        review_reasons: list[str] = []
         if predicted_class == self.class_names[self.normal_index]:
             if confidence >= pass_confidence and anomaly_score <= anomaly_gate:
                 decision = "PASS"
+                decision_reason = (
+                    f"PASS: calibrated confidence {confidence:.3f} >= {pass_confidence:.2f} and anomaly "
+                    f"percentile {anomaly_score:.3f} within the {anomaly_gate:.2f} review gate."
+                )
             else:
                 decision = "REVIEW"
-                review_reason = (
-                    "Anomalous condition detected in a nominally normal sample."
-                    if anomaly_score > anomaly_gate
-                    else f"Normal-class confidence {confidence:.2f} below pass threshold {pass_confidence:.2f}."
-                )
+                if anomaly_score > anomaly_gate:
+                    review_reason = (
+                        "Anomalous condition detected in a nominally normal sample."
+                    )
+                    review_reasons.append(f"anomaly percentile {anomaly_score:.3f} exceeds the {anomaly_gate:.2f} gate")
+                if confidence < pass_confidence:
+                    review_reasons.append(
+                        f"normal-class calibrated confidence {confidence:.3f} below the pass threshold {pass_confidence:.2f}"
+                    )
+                decision_reason = "REVIEW: normal sample outside the validated pass region — " + "; ".join(review_reasons)
         else:
             if confidence >= defect_confidence and novelty_score <= anomaly_gate:
                 decision = "DEFECT"
+                decision_reason = (
+                    f"DEFECT: calibrated confidence {confidence:.3f} >= {defect_confidence:.2f} and novelty "
+                    f"{novelty_score:.3f} within the {anomaly_gate:.2f} review gate."
+                )
             else:
                 decision = "REVIEW"
                 if novelty_score > anomaly_gate:
@@ -342,15 +391,21 @@ class VisionModel:
                         "Unfamiliar condition: the sample does not resemble the known class it was assigned to; "
                         "not forced into a known defect class."
                     )
-                else:
-                    review_reason = (
-                        f"Defect-class confidence {confidence:.2f} below defect threshold {defect_confidence:.2f}."
+                    review_reasons.append(
+                        f"novelty {novelty_score:.3f} exceeds the {anomaly_gate:.2f} review gate (unseen-condition guard)"
                     )
+                if confidence < defect_confidence:
+                    review_reasons.append(
+                        f"defect-class calibrated confidence {confidence:.3f} below the defect threshold {defect_confidence:.2f}"
+                    )
+                decision_reason = "REVIEW: defect hypothesis below the validated decision region — " + "; ".join(review_reasons)
         decided = finish(
             decision_stage,
             metrics={
                 "decision": decision,
                 "review_reason": review_reason,
+                "review_reasons": review_reasons,
+                "decision_reason": decision_reason,
                 "thresholds": {
                     "pass_confidence": pass_confidence,
                     "defect_confidence": defect_confidence,
@@ -392,11 +447,22 @@ class VisionModel:
                 "predicted_class": predicted_class,
                 "is_normal": predicted_class == self.class_names[self.normal_index],
             },
+            "feature_vector": {
+                "dim": len(feature_vector),
+                "values": feature_vector,
+                "note": "Real 1280-d embedding produced by the frozen backbone for this image.",
+            },
+            "class_distances": class_distances,
+            "feature_space_point": self.project_feature_space(standardized),
             "class_probabilities": {name: round(float(probabilities[i]), 4) for i, name in enumerate(self.class_names)},
             "confidence": {
                 "value": round(confidence, 4),
+                "raw_probability": round(raw_confidence, 4),
                 "level": confidence_level,
                 "method": "temperature_scaled softmax on validation-calibrated logits",
+                "calibration_status": "CALIBRATED",
+                "calibration_method": "temperature_scaling (fitted on the validation split)",
+                "model_version": self.metadata.get("trained_at") or self.metadata.get("backbone", {}).get("name"),
                 "limitations": "Confidence reflects model uncertainty, not physical certainty.",
             },
             "anomaly_score": {
@@ -415,7 +481,9 @@ class VisionModel:
                 "note": "Model attention map - not a ground-truth defect boundary.",
             },
             "decision": decision,
+            "decision_reason": decision_reason,
             "review_reason": review_reason,
+            "review_reasons": review_reasons,
             "evidence": [
                 {
                     "statement": f"Calibrated probability for '{predicted_class}' is {confidence:.2%}.",
@@ -434,6 +502,7 @@ class VisionModel:
                 },
             ],
             "process_link": process_link,
+            "human_review": None,
             "model": {
                 "backbone": self.metadata.get("backbone", {}).get("name"),
                 "trained_at": self.metadata.get("trained_at"),
@@ -447,13 +516,15 @@ class VisionModel:
             ],
             "trace": trace,
         }
+        if extra:
+            result.update(extra)
         persist_inspection(self.artifacts_dir, result, image_bytes)
         yield {"event": "result", "result": result}
 
-    def inspect(self, image_bytes: bytes, filename: str | None = None) -> dict:
+    def inspect(self, image_bytes: bytes, filename: str | None = None, extra: dict | None = None) -> dict:
         """Consume the event stream and return the final result (non-streaming use)."""
         result = None
-        for event in self.inspect_events(image_bytes, filename):
+        for event in self.inspect_events(image_bytes, filename, extra=extra):
             if event["event"] == "result":
                 result = event["result"]
             elif event["event"] == "error":

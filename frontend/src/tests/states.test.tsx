@@ -77,14 +77,14 @@ afterEach(() => {
 });
 
 describe("phase 12 app shell", () => {
-  it("opens on the inspection area with exactly four primary areas", async () => {
+  it("opens on the command center with exactly four primary areas", async () => {
     render(<App />);
-    await waitFor(() => expect(screen.getByRole("button", { name: "Inspect" })).toBeInTheDocument());
-    for (const label of ["Inspect", "Console", "Decision", "Control Room"]) {
+    await waitFor(() => expect(screen.getByRole("button", { name: "Command Center" })).toBeInTheDocument());
+    for (const label of ["Command Center", "Inspection", "Process Intelligence", "Investigation History"]) {
       expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
     }
     // the old eight-view navigation must not exist
-    for (const removed of ["Process", "Flow", "Impact", "What-if", "Recommendations", "Root cause"]) {
+    for (const removed of ["Process", "Flow", "Impact", "What-if", "Recommendations", "Root cause", "Console", "Decision", "Control Room"]) {
       expect(screen.queryByRole("button", { name: removed })).not.toBeInTheDocument();
     }
   });
@@ -96,7 +96,9 @@ describe("phase 12 app shell", () => {
 
   it("shows an honest not-trained state with a train action when no model exists", async () => {
     modelReady = false;
+    const user = userEvent.setup();
     render(<App />);
+    await user.click(await screen.findByRole("button", { name: "Inspection" }));
     expect(await screen.findByText(/visual inspection model not trained/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /train vision model/i })).toBeInTheDocument();
   });
@@ -107,21 +109,21 @@ describe("phase 12 app shell", () => {
     expect(await screen.findByText(/backend offline/i)).toBeInTheDocument();
   });
 
-  it("control room explains that no process dataset is loaded", async () => {
+  it("process intelligence explains that no process dataset is loaded", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await user.click(await screen.findByRole("button", { name: "Control Room" }));
-    expect(await screen.findByText(/no process dataset loaded/i)).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Process Intelligence" }));
+    expect(await screen.findByText(/process data not loaded/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /upload process dataset/i })).toBeInTheDocument();
   });
 
-  it("console and decision views show honest empty states before an inspection", async () => {
+  it("inspection studio shows honest empty states before an inspection", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await user.click(await screen.findByRole("button", { name: "Console" }));
-    expect(await screen.findByText(/no inspection has been run yet/i)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Decision" }));
-    expect(await screen.findByText(/run an image inspection first/i)).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Inspection" }));
+    expect(await screen.findByText(/start the automated inspection stream/i)).toBeInTheDocument();
+    expect(screen.getByText(/awaiting decision/i)).toBeInTheDocument();
+    expect((await screen.findAllByText(/no inspection yet/i)).length).toBeGreaterThan(0);
   });
 
   it("rejects an unreadable image upload with a structured error", async () => {
@@ -147,6 +149,8 @@ describe("phase 12 app shell", () => {
       }),
     );
     render(<App />);
+    await user.click(await screen.findByRole("button", { name: "Inspection" }));
+    await user.click(await screen.findByRole("button", { name: /manual inspection/i }));
     await screen.findByRole("button", { name: /upload image/i });
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     await user.upload(input, new File(["x"], "corrupt.png", { type: "image/png" }));

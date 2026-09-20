@@ -216,3 +216,17 @@ def test_api_vision_stream_emits_ndjson_events(client):
         stage_ids = [event["stage"]["id"] for event in events if event["event"] == "stage"]
         assert stage_ids[0] == "image_received"
         assert stage_ids[-1] == "process_link"
+
+        # redesign contract: the result must expose the real embedding and the
+        # distance of this sample to every known class centroid
+        result = events[-1]["result"]
+        feature_vector = result["feature_vector"]
+        assert feature_vector["dim"] == len(feature_vector["values"])
+        assert feature_vector["dim"] > 0
+        assert result["class_distances"].keys() == set(result["model"]["classes"])
+        for distance in result["class_distances"].values():
+            assert isinstance(distance, float) and distance >= 0.0
+
+        # and the streaming feature_extraction stage must carry the same vector
+        feature_stage = next(event["stage"] for event in events if event["stage"]["id"] == "feature_extraction")
+        assert len(feature_stage["metrics"]["embedding"]) == feature_vector["dim"]

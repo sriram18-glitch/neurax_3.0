@@ -5,9 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
 
 /**
- * Phase 12 integration test with a mocked backend.
- * All mocked values are deliberately unique (zx-prefixed) so rendering them
- * proves the UI consumes the API layer rather than hardcoded results.
+ * V2 integration tests with a mocked backend:
+ * 01 Command Center (automation-first), 02 Inspection (stream + evidence),
+ * 03 Process Intelligence, 04 Investigation History.
+ * Mocked values are deliberately unique (zx-prefixed) so rendering them proves
+ * the UI consumes the API layer rather than hardcoded results.
  */
 
 const STATION = "ZX-9";
@@ -18,21 +20,6 @@ const DECISION = "DEFECT";
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
-}
-
-/** NDJSON stream response mirroring POST /api/vision/inspect/stream. */
-function streamResponse(inspection: { trace: Array<Record<string, unknown>> }): Response {
-  const lines = [
-    ...inspection.trace.map((stage) => JSON.stringify({ event: "stage", stage })),
-    JSON.stringify({ event: "result", result: inspection }),
-  ].join("\n") + "\n";
-  const stream = new ReadableStream({
-    start(controller) {
-      controller.enqueue(new TextEncoder().encode(lines));
-      controller.close();
-    },
-  });
-  return new Response(stream, { status: 200, headers: { "Content-Type": "application/x-ndjson" } });
 }
 
 const contract = {
@@ -155,6 +142,9 @@ const inspection = {
   image_metadata: { width: 256, height: 256, mode: "L", format: "PNG", bytes: 20000 },
   preprocessing: { resize: "224x224", normalization: "mobilenet_v2.preprocess_input", preprocessed_png_base64: "aGVsbG8=" },
   prediction: { predicted_class: CLASS_NAME, is_normal: false },
+  feature_vector: { dim: 1280, values: [0.11, -0.42, 0.83, 0.02, -0.19, 0.5, -0.7, 0.31] },
+  class_distances: { [CLASS_NAME]: 1.24, normal: 3.41 },
+  feature_space_point: [1.5, -0.5],
   class_probabilities: { [CLASS_NAME]: CONFIDENCE, normal: 0.05, other: 0.02 },
   confidence: { value: CONFIDENCE, level: "HIGH", method: "temperature scaled", limitations: "Confidence reflects model uncertainty, not physical certainty." },
   anomaly_score: { value: 1.0, novelty_score: 0.21, novelty_status: "NORMAL", method: "Mahalanobis percentile", note: "not a probability" },
@@ -177,32 +167,97 @@ const inspection = {
     { id: "validation", status: "complete", started_at: "2026-01-01T00:00:00Z", duration_ms: 4.5, summary: "Valid PNG image 256x256.", metrics: { width: 256, height: 256 } },
     { id: "preprocessing", status: "complete", started_at: "2026-01-01T00:00:00Z", duration_ms: 3.1, summary: "Resizing.", metrics: { resize: "224x224" } },
     { id: "feature_extraction", status: "complete", started_at: "2026-01-01T00:00:00Z", duration_ms: 150, summary: "Backbone.", metrics: { embedding_dim: 1280 } },
-    { id: "classification", status: "complete", started_at: "2026-01-01T00:00:00Z", duration_ms: 2, summary: "Scoring.", metrics: { predicted_class: CLASS_NAME } },
-    { id: "anomaly_analysis", status: "complete", started_at: "2026-01-01T00:00:00Z", duration_ms: 2, summary: "Comparing.", metrics: { anomaly_score: 1.0 } },
+    { id: "classification", status: "complete", started_at: "2026-01-01T00:00:00Z", duration_ms: 2, summary: "Scoring.", metrics: { predicted_class: CLASS_NAME, calibrated_probability: CONFIDENCE } },
+    { id: "anomaly_analysis", status: "complete", started_at: "2026-01-01T00:00:00Z", duration_ms: 2, summary: "Comparing.", metrics: { anomaly_score: 1.0, novelty_score: 0.21, novelty_status: "NORMAL" } },
     { id: "localization", status: "complete", started_at: "2026-01-01T00:00:00Z", duration_ms: 5, summary: "CAM.", metrics: { method: "class-activation mapping" } },
-    { id: "confidence", status: "complete", started_at: "2026-01-01T00:00:00Z", duration_ms: 1, summary: "Summarizing.", metrics: { confidence_level: "HIGH" } },
+    { id: "confidence", status: "complete", started_at: "2026-01-01T00:00:00Z", duration_ms: 1, summary: "Summarizing.", metrics: { confidence_level: "HIGH", calibrated_probability: CONFIDENCE } },
     { id: "decision", status: "complete", started_at: "2026-01-01T00:00:00Z", duration_ms: 1, summary: "Thresholds.", metrics: { decision: DECISION } },
     { id: "process_link", status: "not_supported", started_at: "2026-01-01T00:00:00Z", duration_ms: 0.5, summary: "No metadata.", metrics: { status: "NOT_AVAILABLE" } },
   ],
 };
 
-const recommendations = {
-  dataset_id: contract.dataset_id,
-  recommendations: [
-    {
-      recommendation_id: "recmock000001",
-      action_type: "INVESTIGATE_HIGH_UTILIZATION",
-      title: `Investigate high utilization at ${STATION}`,
-      target: STATION,
-      station: STATION,
-      priority: 8,
-      evidence_quality: "MODERATE_EVIDENCE",
-      rank: 1,
-      generated_at: "2026-01-01T00:00:00Z",
-    },
+const streamSummary = {
+  inspection_id: inspection.inspection_id,
+  filename: inspection.filename,
+  class_folder: CLASS_NAME,
+  decision: DECISION,
+  predicted_class: CLASS_NAME,
+  confidence: CONFIDENCE,
+  novelty_status: "NORMAL",
+  at: "2026-01-01T00:00:01Z",
+};
+
+const streamStatus = {
+  label: "SIMULATED PRODUCTION STREAM",
+  note: "Frames are served from the real image dataset in a deterministic order.",
+  station_id: "Camera 01",
+  dataset_available: true,
+  dataset_error: null,
+  running: false,
+  speed: 1,
+  speeds: [0.5, 1, 2, 5],
+  cursor: 0,
+  frame_number: 0,
+  total_frames: 9600,
+  processed: 0,
+  remaining: 9600,
+  session_started_at: null,
+  next_frame: { class_folder: CLASS_NAME, filename: "zxpart.png" },
+  class_plan: { order: "one defect frame, then two normal frames, rotating defect classes", counts: {}, normal_class: "normal", total_frames: 9600 },
+  last_summary: null,
+  history: [],
+  decision_counts: {},
+};
+
+const investigationStages = [
+  { id: "received", label: "Inspection received", status: "COMPLETE", summary: "256x256 PNG", detail: null, epistemic: "OBSERVED", payload: null, duration_ms: 0.1 },
+  { id: "classifying", label: "Classification", status: "COMPLETE", summary: `${CLASS_NAME} · calibrated probability 93.0%`, detail: "temperature scaled", epistemic: "MODEL OUTPUT", payload: { predicted_class: CLASS_NAME, confidence: CONFIDENCE }, duration_ms: 2 },
+  { id: "localizing", label: "Localization", status: "COMPLETE", summary: "attention region derived", detail: null, epistemic: "MODEL-DERIVED", payload: null, duration_ms: 5 },
+  { id: "checking_robustness", label: "Robustness check", status: "COMPLETE", summary: "anomaly percentile 1.000 · novelty 0.210 (NORMAL)", detail: null, epistemic: "MODEL OUTPUT", payload: null, duration_ms: 1 },
+  { id: "process_correlation", label: "Process correlation", status: "DATA_GAP", summary: "No process dataset selected", detail: "Select a processed dataset to attach dataset-level process context.", epistemic: "DATA GAP", payload: null, duration_ms: 0.1 },
+  { id: "root_cause", label: "Root-cause hypotheses", status: "DATA_GAP", summary: "No process dataset selected", detail: null, epistemic: "DATA GAP", payload: null, duration_ms: 0.1 },
+  { id: "bottleneck", label: "Bottleneck / flow", status: "DATA_GAP", summary: "No process dataset selected", detail: null, epistemic: "DATA GAP", payload: null, duration_ms: 0.1 },
+  { id: "impact", label: "Production impact", status: "DATA_GAP", summary: "No process dataset selected", detail: null, epistemic: "DATA GAP", payload: null, duration_ms: 0.1 },
+  { id: "what_if", label: "What-if scenario", status: "DATA_GAP", summary: "No process dataset selected", detail: null, epistemic: "DATA GAP", payload: null, duration_ms: 0.1 },
+  { id: "recommendation", label: "Advisory actions", status: "DATA_GAP", summary: "No process dataset selected", detail: null, epistemic: "DATA GAP", payload: null, duration_ms: 0.1 },
+];
+
+const investigationRecord = {
+  investigation_id: "zxinv000001",
+  inspection_id: inspection.inspection_id,
+  dataset_id: null,
+  station_id: "Camera 01",
+  generated_at: "2026-01-01T00:00:02Z",
+  status: "DATA_GAP",
+  decision: DECISION,
+  predicted_class: CLASS_NAME,
+  confidence: CONFIDENCE,
+  anomaly_score: 1.0,
+  novelty_status: "NORMAL",
+  review_reason: null,
+  filename: inspection.filename,
+  stages: investigationStages,
+  stage_summary: { complete: 4, data_gap: 6, awaiting_input: 0, failed: 0, partial: 0 },
+  total_duration_s: 0.42,
+  limitations: ["Investigation stages reuse stored analyses; association is never presented as causation."],
+  events: [
+    { at: "2026-01-01T00:00:02Z", type: "inspection_completed", message: `Inspection completed — ${CLASS_NAME} (${DECISION})`, epistemic: "OBSERVED", investigation_id: "zxinv000001", inspection_id: inspection.inspection_id },
+    { at: "2026-01-01T00:00:02Z", type: "investigation_triggered", message: "Automatic investigation triggered", epistemic: "OBSERVED", investigation_id: "zxinv000001", inspection_id: inspection.inspection_id },
   ],
-  count: 1,
-  decision_summary: null,
+};
+
+const investigationSummary = {
+  investigation_id: investigationRecord.investigation_id,
+  inspection_id: inspection.inspection_id,
+  dataset_id: null,
+  generated_at: investigationRecord.generated_at,
+  status: investigationRecord.status,
+  decision: DECISION,
+  predicted_class: CLASS_NAME,
+  confidence: CONFIDENCE,
+  filename: inspection.filename,
+  stage_summary: investigationRecord.stage_summary,
+  top_action: null,
 };
 
 function routeFetch(url: string): Response {
@@ -213,14 +268,82 @@ function routeFetch(url: string): Response {
       model_available: true,
       classes: [CLASS_NAME, "normal"],
       normal_class: "normal",
-      metrics: { accuracy: 0.99, f1_weighted: 0.99, val_accuracy: 0.99, false_accept_rate: 0, false_reject_rate: 0, review_rate: 0.02, decisions: { PASS: 9, DEFECT: 40, REVIEW: 1 }, per_class: {}, confusion_matrix: [] },
+      metrics: {
+        accuracy: 0.99,
+        f1_weighted: 0.99,
+        val_accuracy: 0.99,
+        false_accept_rate: 0,
+        false_reject_rate: 0,
+        review_rate: 0.02,
+        decisions: { PASS: 9, DEFECT: 40, REVIEW: 1 },
+        decision_matrix: [
+          { actual: "PASS (normal)", counts: { PASS: 9, DEFECT: 0, REVIEW: 1 } },
+          { actual: "DEFECT (defective)", counts: { PASS: 0, DEFECT: 40, REVIEW: 0 } },
+        ],
+        decision_matrix_columns: ["PASS", "DEFECT", "REVIEW"],
+        per_class: {},
+        confusion_matrix: [],
+      },
       thresholds: { pass_confidence: 0.8, defect_confidence: 0.7, anomaly_review_percentile: 0.99 },
-      metadata: { backbone: { name: "mobilenet_v2" }, calibration: "temperature scaling" },
+      temperature: 0.1353,
+      metadata: { backbone: { name: "mobilenet_v2", pretrained: "imagenet", frozen: true, embedding_dim: 1280 }, calibration: "temperature scaling" },
       dataset_available: true,
     });
-  if (url.includes("/api/vision/inspect/stream")) return streamResponse(inspection);
+  if (url.endsWith("/api/vision/feature-space"))
+    return jsonResponse({
+      status: "AVAILABLE",
+      method: "PCA via SVD over standardized training embeddings (real data only)",
+      components: 2,
+      explained_variance_ratio: [0.4, 0.2],
+      sampling: "deterministic evenly-spaced subsample, up to 90 points per class",
+      clouds: { [CLASS_NAME]: [[1, 2], [1.5, 1.5]], normal: [[-1, -2], [-2, -1]] },
+      counts: { [CLASS_NAME]: 400, normal: 434 },
+    });
+  if (url.includes("/api/vision/stream/status")) return jsonResponse(streamStatus);
+  if (url.includes("/api/vision/stream/start") || url.includes("/api/vision/stream/resume"))
+    return jsonResponse({ ...streamStatus, running: true });
+  if (url.includes("/api/vision/stream/pause")) return jsonResponse(streamStatus);
+  if (url.includes("/api/vision/stream/reset")) return jsonResponse(streamStatus);
+  if (url.includes("/api/vision/stream/speed")) return jsonResponse({ ...streamStatus, speed: 2 });
+  if (url.includes("/api/vision/stream/next"))
+    return jsonResponse({
+      inspection,
+      exhausted: false,
+      status: { ...streamStatus, frame_number: 1, processed: 1, history: [streamSummary], last_summary: streamSummary, decision_counts: { [DECISION]: 1 } },
+    });
+  if (url.includes("/api/vision/inspect/stream")) {
+    const lines =
+      inspection.trace.map((stage) => JSON.stringify({ event: "stage", stage })).join("\n") +
+      "\n" +
+      JSON.stringify({ event: "result", result: inspection }) +
+      "\n";
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(lines));
+        controller.close();
+      },
+    });
+    return new Response(stream, { status: 200, headers: { "Content-Type": "application/x-ndjson" } });
+  }
   if (url.includes("/api/vision/inspect")) return jsonResponse(inspection);
   if (url.endsWith("/api/vision/history")) return jsonResponse({ inspections: [], count: 0 });
+  if (url.includes("/api/investigations/run")) return jsonResponse(investigationRecord);
+  if (/\/api\/investigations\/[a-z0-9]+$/.test(url)) return jsonResponse(investigationRecord);
+  if (url.includes("/api/investigations")) return jsonResponse({ investigations: [investigationSummary], count: 1, note: "" });
+  if (url.includes("/api/datasets/testds000001/process/timeline"))
+    return jsonResponse({
+      dataset_id: contract.dataset_id,
+      status: "AVAILABLE",
+      table: "mock_process",
+      bins: 8,
+      order_basis: "recorded row order of the processed dataset (sequence position, not wall-clock time)",
+      series: [{ station: STATION, metric: "utilization", unit: "ratio", column: "ZX-9 Utilization", values: [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9] }],
+      drift_markers: [{ column: "ZX-9 Utilization", bin: 5, direction: "up", peak_ewma_z: 3.1, epistemic: "STATISTICAL ASSOCIATION" }],
+      event_markers: [{ bin: 6, label: "event" }],
+      event_definition: null,
+      note: "Series are server-side aggregates of the real processed data.",
+      limitations: [],
+    });
   if (url.endsWith("/api/datasets"))
     return jsonResponse({ datasets: [{ dataset_id: contract.dataset_id, filename: contract.filename, status: "complete", ingested_at: null, rows: 300 }] });
   if (url.endsWith("/analysis")) return jsonResponse(analysis);
@@ -228,13 +351,18 @@ function routeFetch(url: string): Response {
   if (url.includes("/root-cause/targets")) return jsonResponse({ dataset_id: contract.dataset_id, targets: [], count: 0 });
   if (url.includes("/bottleneck/findings")) return jsonResponse({ dataset_id: contract.dataset_id, analyses: [{ analysis_id: bottleneck.analysis_id }], count: 1 });
   if (url.includes("/bottleneck/")) return jsonResponse(bottleneck);
-  if (url.endsWith("/recommendations")) return jsonResponse(recommendations);
+  if (url.endsWith("/economics/assumptions"))
+    return jsonResponse({ dataset_id: contract.dataset_id, currency: { value: null, source: "NOT_PROVIDED" }, assumptions: {}, updated_at: null, note: "" });
+  if (url.endsWith("/recommendations")) return jsonResponse({ dataset_id: contract.dataset_id, recommendations: [], count: 0, decision_summary: null });
   if (url.match(/\/api\/datasets\/[a-z0-9]+$/)) return jsonResponse(contract);
   return jsonResponse({}, 404);
 }
 
 beforeEach(() => {
-  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => routeFetch(String(input))));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => routeFetch(String(input))),
+  );
 });
 
 afterEach(() => {
@@ -244,13 +372,14 @@ afterEach(() => {
 async function inspectImage() {
   const user = userEvent.setup();
   render(<App />);
-  const uploadButton = await screen.findByRole("button", { name: /upload image/i });
-  expect(uploadButton).toBeInTheDocument();
+  await user.click(await screen.findByRole("button", { name: /^Inspection$/ }));
+  await user.click(await screen.findByRole("button", { name: /manual inspection/i }));
   // raw speed for tests (cinematic pacing is display-only)
   await user.click(screen.getByRole("button", { name: /cinematic/i }));
   const input = document.querySelector('input[type="file"]') as HTMLInputElement;
   await user.upload(input, new File(["fake"], "zxpart.png", { type: "image/png" }));
   await screen.findAllByText(DECISION);
+  await screen.findAllByText(/93\.0%/);
   return user;
 }
 
@@ -259,83 +388,147 @@ async function loadProcessDataset() {
   render(<App />);
   await user.click(await screen.findByRole("button", { name: /no process dataset/i }));
   await user.click(await screen.findByText(contract.filename));
-  await user.click(screen.getByRole("button", { name: "Control Room" }));
+  await user.click(screen.getByRole("button", { name: "Process Intelligence" }));
   await screen.findByText(/current constraint/i);
   return user;
 }
 
-describe("inspection (primary experience)", () => {
-  it("renders the real decision, class, confidence and anomaly from the API", async () => {
+describe("command center (01)", () => {
+  it("is automation-first: stream controls, coverage and the difference strip", async () => {
+    render(<App />);
+    expect(await screen.findByRole("button", { name: /start automated inspection/i })).toBeInTheDocument();
+    expect(screen.getByText("SIMULATED PRODUCTION STREAM")).toBeInTheDocument();
+    expect(screen.getByText(/data coverage/i)).toBeInTheDocument();
+    expect(screen.getByText(/from detection to decision/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /start demo/i })).toBeInTheDocument();
+  });
+
+  it("shows honest data coverage including the missing image→process join", async () => {
+    render(<App />);
+    expect(await screen.findByText(/image → process join/i)).toBeInTheDocument();
+    expect(screen.getByText(/no per-image batch\/station\/unit\/timestamp metadata/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/capability: READY/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/INPUT REQUIRED/i).length).toBeGreaterThan(0);
+  });
+});
+
+describe("inspection studio (02)", () => {
+  it("renders the real decision, class and calibrated confidence from the API", async () => {
     await inspectImage();
+
     expect(screen.getAllByText(CLASS_NAME).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/93\.0%/).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(/93\.0%/)).length).toBeGreaterThan(0);
     expect(screen.getAllByText(DECISION).length).toBeGreaterThan(0);
   });
 
-  it("shows the real processing artifacts: original → preprocessed → anomaly map", async () => {
-    await inspectImage();
-    expect(screen.getByText(/recorded artifacts/i)).toBeInTheDocument();
-    expect(screen.getByText("ORIGINAL")).toBeInTheDocument();
-    expect(screen.getByText("PREPROCESSED")).toBeInTheDocument();
-    expect(screen.getByText("MODEL ANOMALY MAP")).toBeInTheDocument();
-    const images = screen.getAllByRole("img");
-    expect(images.length).toBeGreaterThanOrEqual(3);
-  });
-
-  it("labels localization as model-derived", async () => {
+  it("labels localization as model-derived with ground truth not available", async () => {
     await inspectImage();
     expect(screen.getAllByText(/MODEL-DERIVED/i).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(/NOT AVAILABLE/i)).length).toBeGreaterThan(0);
   });
 
   it("shows the process link as not available with the reason", async () => {
     await inspectImage();
-    expect(screen.getByText(/PROCESS LINK NOT AVAILABLE/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/PROCESS LINK NOT AVAILABLE/i).length).toBeGreaterThan(0);
   });
-});
 
-describe("AI console", () => {
-  it("renders the real trace stages in order with a visual pipeline flow", async () => {
+  it("renders the visual AI pipeline with plain language and technical evidence behind a button", async () => {
     const user = await inspectImage();
-    await user.click(screen.getByRole("button", { name: "Console" }));
-    expect(await screen.findByText("Processing pipeline")).toBeInTheDocument();
-    expect(screen.getByText("AI inspection console")).toBeInTheDocument();
-    const stages = screen.getAllByText(/image received|validation|preprocessing|feature extraction|classification|anomaly analysis|localization|confidence|decision|process link/i);
-    expect(stages.length).toBeGreaterThanOrEqual(10);
-    expect(screen.getByText(/not private model chain-of-thought/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^Classify/i }));
+    expect(await screen.findByText(/zxscratch · 93\.0% calibrated probability/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /view technical evidence/i }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/predicted class/i)).toBeInTheDocument();
   });
-});
 
-describe("decision chain", () => {
-  it("renders WHAT / WHERE / HOW CERTAIN / WHY / WHAT NEXT from real outputs", async () => {
+  it("renders the evidence graph with real node values and click-through detail", async () => {
     const user = await inspectImage();
-    await user.click(screen.getByRole("button", { name: "Decision" }));
-    for (const label of ["WHAT", "WHERE", "HOW CERTAIN", "WHY", "05 · WHAT NEXT"]) {
-      expect(await screen.findByText(label)).toBeInTheDocument();
+    expect(await screen.findByText(/evidence graph/i)).toBeInTheDocument();
+    const node = screen.getByRole("button", { name: new RegExp(`Decision: ${DECISION}`) });
+    await user.click(node);
+    expect(await screen.findByText(/threshold rules applied to calibrated confidence and anomaly/i)).toBeInTheDocument();
+  });
+
+  it("projects the real sample into the training feature space", async () => {
+    await inspectImage();
+    expect(screen.getByText(/feature space/i)).toBeInTheDocument();
+    expect((await screen.findAllByText("current")).length).toBeGreaterThan(0);
+    expect(screen.getByText(/60\.0% of the training variance/i)).toBeInTheDocument();
+  });
+
+  it("separates novelty from confidence and shows the known distribution", async () => {
+    await inspectImage();
+    expect((await screen.findAllByText(/known distribution/i)).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(/^KNOWN$/)).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/0\.210/).length).toBeGreaterThan(0);
+  });
+
+  it("shows measured decision quality with the real thresholds", async () => {
+    await inspectImage();
+    expect((await screen.findAllByText(/pass ≥ 0\.80/)).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/defect < 0\.70/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/false accept/i).length).toBeGreaterThan(0);
+  });
+
+  it("renders the decision chain steps", async () => {
+    await inspectImage();
+    for (const label of ["WHAT", "WHERE", "HOW CERTAIN", "WHY", "FLOW", "IMPACT", "WHAT NEXT"]) {
+      expect(screen.getAllByText(label).length).toBeGreaterThan(0);
     }
-    expect(screen.getByText(/false accept rate/i)).toBeInTheDocument();
-    expect(screen.getByText(/not a ground-truth defect boundary/i)).toBeInTheDocument();
   });
 });
 
-describe("control room", () => {
+describe("process intelligence (03)", () => {
   it("renders the real station, throughput and constraint from the API", async () => {
     await loadProcessDataset();
     expect((await screen.findAllByText(STATION)).length).toBeGreaterThan(0);
-    expect(screen.getByText(/777\.5/)).toBeInTheDocument();
+    expect(screen.getAllByText(/777\.5/).length).toBeGreaterThan(0);
   });
 
-  it("opens the station evidence drawer", async () => {
+  it("opens the station evidence drawer from the constraint ranking", async () => {
     const user = await loadProcessDataset();
-    await user.click(screen.getByRole("button", { name: /why this station/i }));
+    await user.click(screen.getByRole("button", { name: /open evidence/i }));
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText(/why this station/i)).toBeInTheDocument();
     expect(within(dialog).getAllByText(/bottleneck\/findings/).length).toBeGreaterThan(0);
   });
 
-  it("exposes detailed sections through progressive disclosure", async () => {
+  it("renders the process timeline and bottleneck evidence components", async () => {
     const user = await loadProcessDataset();
-    expect(screen.queryByText(/evidence-based hypothesis/i)).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /station constraint ranking/i }));
-    expect(await screen.findByText(/evidence-based hypothesis/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^01 process/i }));
+    expect(await screen.findByText(/process timeline/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^03 flow/i }));
+    expect(await screen.findByText(/bottleneck evidence/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/utilization/i).length).toBeGreaterThan(0);
+  });
+
+  it("switches stages and shows honest empty states", async () => {
+    const user = await loadProcessDataset();
+    await user.click(screen.getByRole("button", { name: /^02 root cause/i }));
+    expect((await screen.findAllByText(/no root-cause analysis/i)).length).toBeGreaterThan(0);
+    await user.click(screen.getByRole("button", { name: /^04 impact/i }));
+    expect(await screen.findByText(/no baseline has been computed/i)).toBeInTheDocument();
+  });
+});
+
+describe("investigation history (04)", () => {
+  it("lists stored investigations and replays the recorded stages", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "Investigation History" }));
+    expect(await screen.findByText(/zxinv000001/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /play investigation/i }));
+    expect(screen.getAllByText("Inspection received").length).toBeGreaterThan(0);
+    await user.click(screen.getByRole("button", { name: /next stage/i }));
+    expect((await screen.findAllByText(/classification/i)).length).toBeGreaterThan(0);
+  });
+
+  it("shows data-gap stages honestly in the replay", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "Investigation History" }));
+    await screen.findByText(/zxinv000001/);
+    expect(screen.getAllByText(/DATA GAP/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/No process dataset selected/).length).toBeGreaterThan(0);
   });
 });

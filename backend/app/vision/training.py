@@ -161,6 +161,50 @@ def softmax(logits: np.ndarray) -> np.ndarray:
     return probabilities / probabilities.sum(axis=1, keepdims=True)
 
 
+FEATURE_SPACE_POINTS_PER_CLASS = 90
+
+
+def _build_feature_space(scaled: np.ndarray, labels: np.ndarray, class_names: list[str]) -> dict:
+    """Deterministic 2-D PCA projection of the real standardized embeddings.
+
+    The projection is computed once at training time and stored; live samples
+    are projected with the same components, so the UI scatter shows real data.
+    """
+    mean = scaled.mean(axis=0)
+    centered = scaled - mean
+    _, _, vt = np.linalg.svd(centered, full_matrices=False)
+    components = vt[:2]
+    projected = centered @ components.T
+    total_variance = float((centered**2).sum())
+    explained = [
+        round(float((projected[:, index] ** 2).sum() / total_variance), 4) if total_variance > 0 else 0.0
+        for index in range(2)
+    ]
+    clouds: dict[str, list[list[float]]] = {}
+    counts: dict[str, int] = {}
+    for class_index, name in enumerate(class_names):
+        positions = np.flatnonzero(labels == class_index)
+        counts[name] = int(positions.size)
+        take = min(positions.size, FEATURE_SPACE_POINTS_PER_CLASS)
+        if take == 0:
+            clouds[name] = []
+            continue
+        step = positions.size / take
+        chosen = positions[(np.arange(take) * step).astype(int)]
+        clouds[name] = [
+            [round(float(point[0]), 3), round(float(point[1]), 3)] for point in projected[chosen]
+        ]
+    payload = {
+        "method": "PCA via SVD over standardized training embeddings (real data only)",
+        "components": 2,
+        "explained_variance_ratio": explained,
+        "sampling": f"deterministic evenly-spaced subsample, up to {FEATURE_SPACE_POINTS_PER_CLASS} points per class",
+        "clouds": clouds,
+        "counts": counts,
+    }
+    return {"components": components, "mean": mean, "payload": payload}
+
+
 def train_vision_model(
     dataset_root: Path,
     artifacts_dir: Path,
@@ -302,6 +346,19 @@ def train_vision_model(
     false_reject_rate = float((decisions[true_normal] == "DEFECT").mean()) if true_normal.any() else None
     review_rate = float((decisions == "REVIEW").mean())
 
+    # PASS / DEFECT / REVIEW decision matrix measured on the test split
+    decision_columns = ["PASS", "DEFECT", "REVIEW"]
+    actual_rows = ["PASS (normal)", "DEFECT (defective)"]
+    decision_matrix = []
+    for is_defect, label in ((False, actual_rows[0]), (True, actual_rows[1])):
+        row_actual = true_defect if is_defect else true_normal
+        decision_matrix.append(
+            {
+                "actual": label,
+                "counts": {column: int((decisions[row_actual] == column).sum()) for column in decision_columns},
+            }
+        )
+
     report = classification_report(
         test_labels, test_predictions, labels=list(range(len(class_names))), target_names=class_names, output_dict=True, zero_division=0
     )
@@ -322,6 +379,8 @@ def train_vision_model(
         "false_accept_rate": false_accept_rate,
         "false_reject_rate": false_reject_rate,
         "review_rate": review_rate,
+        "decision_matrix": decision_matrix,
+        "decision_matrix_columns": decision_columns,
         "decisions": {
             "PASS": int((decisions == "PASS").sum()),
             "DEFECT": int((decisions == "DEFECT").sum()),
@@ -331,6 +390,19 @@ def train_vision_model(
 
     joblib.dump(classifier, artifacts_dir / "classifier.joblib")
     joblib.dump(scaler, artifacts_dir / "scaler.joblib")
+
+    # --- feature space projection (PCA over the real training embeddings) ------
+    # Deterministic 2-D projection so the UI can show the reference clouds and
+    # where a live sample lands. Nothing is invented: these are real embeddings.
+    feature_space = _build_feature_space(scaled_train, train_labels, class_names)
+    np.savez(
+        artifacts_dir / "feature_space.npz",
+        components=feature_space["components"],
+        mean=feature_space["mean"],
+    )
+    with open(artifacts_dir / "feature_space.json", "w", encoding="utf-8") as handle:
+        json.dump(feature_space["payload"], handle, indent=2)
+
     np.savez(
         artifacts_dir / "normal_reference.npz",
         mean=normal_mean,

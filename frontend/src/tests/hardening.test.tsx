@@ -104,11 +104,11 @@ describe("presentation hardening", () => {
     render(<App />);
     await user.click(await screen.findByRole("button", { name: /no process dataset/i }));
     await user.click(await screen.findByText(contract.filename));
-    await user.click(screen.getByRole("button", { name: "Control Room" }));
+    await user.click(screen.getByRole("button", { name: "Process Intelligence" }));
     await screen.findByText(/no candidate constraint/i);
 
     await user.click(screen.getByRole("button", { name: /reset/i }));
-    expect(await screen.findByText(/no process dataset loaded/i)).toBeInTheDocument();
+    expect(await screen.findByText(/process data not loaded/i)).toBeInTheDocument();
     // dataset list still available
     await user.click(screen.getByRole("button", { name: /no process dataset/i }));
     expect(await screen.findByText(contract.filename)).toBeInTheDocument();

@@ -97,6 +97,17 @@ verify("test accuracy is a real measured value", 0 <= metrics["accuracy"] <= 1)
 verify("false accept rate measured", metrics["false_accept_rate"] is not None)
 verify("false reject rate measured", metrics["false_reject_rate"] is not None)
 verify("calibration is temperature scaling", calibration["method"] == "temperature_scaling")
+matrix = metrics.get("decision_matrix")
+verify("decision matrix recorded", bool(matrix) and len(matrix) == 2)
+matrix_columns = metrics.get("decision_matrix_columns", [])
+verify("decision matrix columns are PASS/DEFECT/REVIEW", matrix_columns == ["PASS", "DEFECT", "REVIEW"])
+if matrix:
+    row_totals = [sum(row["counts"].values()) for row in matrix]
+    verify(
+        "decision matrix counts match the test split",
+        sum(row_totals) == metrics["decisions"]["PASS"] + metrics["decisions"]["DEFECT"] + metrics["decisions"]["REVIEW"],
+        f"rows={row_totals}",
+    )
 print(f"    test accuracy {metrics['accuracy']:.4f} · decisions {metrics['decisions']} · temperature {calibration['temperature']:.4f}")
 
 # ---------------------------------------------------------------------------

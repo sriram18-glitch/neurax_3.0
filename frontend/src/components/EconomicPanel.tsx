@@ -83,9 +83,11 @@ export function EconomicPanel() {
             );
           })}
           <p className="text-2xs leading-relaxed text-ink-3">
-            {missing.length > 0
-              ? `${missing.length} field(s) still NOT_PROVIDED. Economic outputs remain NOT AVAILABLE until supplied.`
-              : "All fields supplied. Baseline and scenarios can be calculated."}
+            {!assumptions
+              ? "Assumption status not loaded yet. Saving supplies values — the system never invents economic defaults."
+              : missing.length > 0
+                ? `${missing.length} field(s) still NOT_PROVIDED. Economic outputs remain NOT AVAILABLE until supplied.`
+                : "All fields supplied. Baseline and scenarios can be calculated."}
           </p>
         </div>
 

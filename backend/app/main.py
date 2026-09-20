@@ -13,7 +13,7 @@ import uuid
 from pathlib import Path
 
 import pandas as pd
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.settings import (
@@ -45,6 +45,19 @@ from app.recommend import (
     list_recommendations,
 )
 from app.vision.discovery import profile_image_directory
+from app.vision.batch import BatchError, create_batch, get_batch, inspect_batch, list_batches, save_batch_raw
+from app.vision.review import ReviewError, list_review_queue, record_human_decision, review_stats
+from app.vision.source import (
+    SourceError,
+    SourceStream,
+    add_files,
+    create_demo_source,
+    create_source,
+    delete_source,
+    get_source,
+    inspect_source,
+    list_sources,
+)
 from app.vision.inference import (
     VisionModel,
     VisionModelError,
@@ -53,7 +66,10 @@ from app.vision.inference import (
     list_inspections,
 )
 from app.vision.service import inference_status, vision_status
+from app.vision.stream import InspectionStream
 from app.vision.training import dataset_fingerprint, discover_class_dataset, train_vision_model
+from app.investigations import get_investigation, list_investigations, run_investigation
+from app.flow.timeline import build_timeline
 
 RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -1137,3 +1153,396 @@ def get_anomalies(dataset_id: str, limit: int = 100) -> dict:
         "top_examples": examples,
         "terminology": "PROCESS / FEATURE-SPACE ANOMALY DETECTION - not a defect label and not visual OOD detection.",
     }
+
+
+# ---------------------------------------------------------------------------
+# V2: production stream, feature space, process timeline, investigations
+# ---------------------------------------------------------------------------
+
+STREAM = SourceStream()
+
+
+def _stream_error(error: VisionModelError | SourceError) -> HTTPException:
+    status = 503 if isinstance(error, VisionModelError) else 409
+    return HTTPException(status_code=status, detail=error.to_dict())
+
+
+@app.get("/api/vision/stream/status")
+def vision_stream_status() -> dict:
+    return STREAM.status()
+
+
+@app.post("/api/vision/stream/start")
+def vision_stream_start() -> dict:
+    try:
+        return STREAM.start()
+    except (VisionModelError, SourceError) as error:
+        raise _stream_error(error) from error
+
+
+@app.post("/api/vision/stream/pause")
+def vision_stream_pause() -> dict:
+    return STREAM.pause()
+
+
+@app.post("/api/vision/stream/resume")
+def vision_stream_resume() -> dict:
+    try:
+        return STREAM.resume()
+    except (VisionModelError, SourceError) as error:
+        raise _stream_error(error) from error
+
+
+@app.post("/api/vision/stream/reset")
+def vision_stream_reset() -> dict:
+    """Reset the CURRENT source's stream - never a hardcoded dataset."""
+    return STREAM.reset()
+
+
+@app.post("/api/vision/stream/speed")
+def vision_stream_speed(body: dict | None = None) -> dict:
+    body = body or {}
+    return STREAM.set_speed(body.get("speed", 1.0))
+
+
+@app.post("/api/vision/stream/next")
+def vision_stream_next() -> dict:
+    """Process the next real frame from the active user-selected source."""
+    try:
+        return STREAM.next_frame(_get_vision_model())
+    except (VisionModelError, SourceError) as error:
+        raise _stream_error(error) from error
+
+
+# ---------------------------------------------------------------------------
+# V2.3: runtime inspection sources (no hardcoded production paths)
+# ---------------------------------------------------------------------------
+
+def _source_error(error: SourceError) -> HTTPException:
+    return HTTPException(status_code=409, detail=error.to_dict())
+
+
+@app.get("/api/inspection/sources")
+def inspection_sources_list(limit: int = 20) -> dict:
+    return {"sources": list_sources(limit=limit), "count": len(list_sources(limit=limit))}
+
+
+@app.get("/api/inspection/sources/current")
+def inspection_sources_current() -> dict:
+    record = STREAM.active_source()
+    if record is None:
+        return {"source": None, "note": "No inspection source selected. Add an image, image set, or dataset to begin."}
+    return {"source": record}
+
+
+@app.get("/api/inspection/sources/{source_id}")
+def inspection_sources_get(source_id: str) -> dict:
+    record = get_source(source_id)
+    if record is None:
+        raise _source_error(SourceError("SOURCE_NOT_FOUND", f"Source '{source_id}' does not exist.", None))
+    return record
+
+
+@app.post("/api/inspection/sources")
+async def inspection_sources_create(
+    files: list[UploadFile] = File(default=[]),
+    source_type: str = Form("IMAGE_SET"),
+    display_name: str | None = Form(default=None),
+) -> dict:
+    """Ingest user-selected files into a session source (generated ID)."""
+    try:
+        uploaded: list[tuple[str, bytes]] = []
+        for file in files:
+            if not file.filename:
+                continue
+            data = await file.read()
+            uploaded.append((file.filename, data))
+        if source_type == "BUILT_IN_DEMO":
+            record = create_demo_source(demo_dir=DEMO_DATASET_DIR)
+        else:
+            record = create_source(uploaded, str(source_type), display_name=display_name)
+        return record
+    except SourceError as error:
+        raise _source_error(error) from error
+
+
+@app.post("/api/inspection/sources/{source_id}/files")
+async def inspection_sources_add(source_id: str, files: list[UploadFile] = File(default=[])) -> dict:
+    try:
+        uploaded: list[tuple[str, bytes]] = []
+        for file in files:
+            if not file.filename:
+                continue
+            uploaded.append((file.filename, await file.read()))
+        return add_files(source_id, uploaded)
+    except SourceError as error:
+        raise _source_error(error) from error
+
+
+@app.post("/api/inspection/sources/{source_id}/start")
+def inspection_sources_start(source_id: str) -> dict:
+    """Activate the source for the production stream and start it."""
+    try:
+        STREAM.set_source(source_id)
+        return STREAM.start()
+    except (VisionModelError, SourceError) as error:
+        raise _stream_error(error) from error
+
+
+@app.post("/api/inspection/sources/{source_id}/pause")
+def inspection_sources_pause(source_id: str) -> dict:
+    return STREAM.pause()
+
+
+@app.post("/api/inspection/sources/{source_id}/next")
+def inspection_sources_next(source_id: str) -> dict:
+    try:
+        if STREAM.active_source_id != source_id:
+            STREAM.set_source(source_id)
+        return STREAM.next_frame(_get_vision_model())
+    except (VisionModelError, SourceError) as error:
+        raise _stream_error(error) from error
+
+
+@app.post("/api/inspection/sources/{source_id}/reset")
+def inspection_sources_reset(source_id: str) -> dict:
+    """Reset the CURRENT source's stream state (never a hardcoded dataset)."""
+    try:
+        if STREAM.active_source_id != source_id:
+            STREAM.set_source(source_id)
+        return STREAM.reset()
+    except SourceError as error:
+        raise _source_error(error) from error
+
+
+@app.post("/api/inspection/sources/{source_id}/inspect")
+def inspection_sources_inspect(source_id: str) -> dict:
+    """Run the real pipeline over every valid image in the source (batch-style)."""
+    import threading
+
+    record = get_source(source_id)
+    if record is None:
+        raise _source_error(SourceError("SOURCE_NOT_FOUND", f"Source '{source_id}' does not exist.", None))
+    if record["status"] in {"inspecting", "complete"} and record.get("results"):
+        return record
+
+    def run() -> None:
+        try:
+            from app.vision.inference import VisionModel as _VisionModel
+
+            model = _VisionModel(VISION_MODEL_DIR)
+            inspect_source(source_id, model)
+        except Exception:  # noqa: BLE001 - failures are reflected in the record
+            current = get_source(source_id)
+            if current is not None:
+                current["status"] = "failed"
+                from app.vision.source import _save as _save_source
+
+                _save_source(current)
+
+    threading.Thread(target=run, daemon=True).start()
+    return get_source(source_id)
+
+
+@app.delete("/api/inspection/sources/{source_id}")
+def inspection_sources_delete(source_id: str) -> dict:
+    if STREAM.active_source_id == source_id:
+        STREAM.clear_source()
+    delete_source(source_id)
+    return {"deleted": source_id, "note": "Source and its ingested files were removed."}
+
+
+@app.get("/api/vision/feature-space")
+def vision_feature_space() -> dict:
+    model = _get_vision_model()
+    if not model.available:
+        return {
+            "status": "NOT_TRAINED",
+            "reason": "No vision model has been trained yet; the feature space is unavailable.",
+            "clouds": {},
+        }
+    payload = model.feature_space_payload()
+    if payload is None:
+        return {
+            "status": "NOT_AVAILABLE",
+            "reason": "The trained artifacts predate the feature-space projection; retrain to generate it.",
+            "clouds": {},
+        }
+    return {"status": "AVAILABLE", **payload}
+
+
+@app.get("/api/datasets/{dataset_id}/process/timeline")
+def process_timeline(dataset_id: str, bins: int = 48) -> dict:
+    session = STORE.get(dataset_id)
+    if session is None:
+        raise _not_found(dataset_id)
+    contract = session.get("contract") or {}
+    summary = contract.get("summary") or {}
+    return build_timeline(
+        dataset_id,
+        ARTIFACTS_DIR / dataset_id,
+        stations=list(summary.get("stations") or []),
+        preferred_table=summary.get("primary_table"),
+        bins=bins,
+    )
+
+
+@app.post("/api/investigations/run")
+def investigations_run(body: dict | None = None) -> dict:
+    body = body or {}
+    inspection_id = body.get("inspection_id")
+    if not inspection_id:
+        raise HTTPException(
+            status_code=422,
+            detail=IngestError("INSPECTION_REQUIRED", "Provide 'inspection_id' in the request body.").to_dict(),
+        )
+    inspection = get_inspection(VISION_MODEL_DIR, str(inspection_id))
+    if inspection is None:
+        raise HTTPException(
+            status_code=404,
+            detail=IngestError("INSPECTION_NOT_FOUND", f"Inspection '{inspection_id}' does not exist.").to_dict(),
+        )
+    dataset_id = body.get("dataset_id")
+    if dataset_id is not None and STORE.get(str(dataset_id)) is None:
+        raise HTTPException(
+            status_code=404,
+            detail=IngestError("DATASET_NOT_FOUND", f"Dataset '{dataset_id}' is not loaded in this session.").to_dict(),
+        )
+    return run_investigation(
+        inspection,
+        str(dataset_id) if dataset_id else None,
+        store=STORE,
+        artifacts_dir=ARTIFACTS_DIR,
+        models_dir=MODELS_DIR,
+    )
+
+
+@app.get("/api/investigations")
+def investigations_list(limit: int = 50) -> dict:
+    records = list_investigations()
+    limit = max(1, min(int(limit), 200))
+    return {
+        "investigations": records[:limit],
+        "count": len(records),
+        "note": "Investigations are stored on the backend; every stage carries its epistemic status.",
+    }
+
+
+@app.get("/api/investigations/{investigation_id}")
+def investigations_get(investigation_id: str) -> dict:
+    record = get_investigation(investigation_id)
+    if record is None:
+        raise HTTPException(
+            status_code=404,
+            detail=IngestError("INVESTIGATION_NOT_FOUND", f"Investigation '{investigation_id}' does not exist.").to_dict(),
+        )
+    return record
+
+
+# ---------------------------------------------------------------------------
+# V2.1: batch / dataset inspection and the human review queue
+# ---------------------------------------------------------------------------
+
+def _batch_error(error: BatchError | ReviewError) -> HTTPException:
+    return HTTPException(status_code=422, detail=error.to_dict())
+
+
+@app.post("/api/vision/batch")
+async def vision_batch_create(files: list[UploadFile] = File(default=[]), zip: UploadFile | None = File(default=None)) -> dict:
+    """Ingest + validate a batch of images (or a ZIP). Returns the data-health report."""
+    try:
+        if zip is not None and zip.filename:
+            zip_bytes = await zip.read()
+            if len(zip_bytes) > 500 * 1024 * 1024:
+                raise BatchError("BATCH_TOO_LARGE", "ZIP exceeds 500 MB.", None)
+            zip_path = RUNTIME_DIR / "batches" / "uploads" / f"{uuid.uuid4().hex}.zip"
+            zip_path.parent.mkdir(parents=True, exist_ok=True)
+            zip_path.write_bytes(zip_bytes)
+            entries = None
+            zip_source = zip_path
+        else:
+            uploaded: list[tuple[str, bytes]] = []
+            for file in files:
+                data = await file.read()
+                if not file.filename:
+                    continue
+                uploaded.append((file.filename, data))
+            if not uploaded:
+                raise BatchError("BATCH_NO_IMAGES", "No image files were uploaded.", None)
+            entries = uploaded
+            zip_source = None
+        record = create_batch(entries, zip_source)
+        save_batch_raw(record["batch_id"], entries, zip_source)
+        return record
+    except BatchError as error:
+        raise _batch_error(error) from error
+
+
+@app.post("/api/vision/batch/{batch_id}/inspect")
+def vision_batch_inspect(batch_id: str) -> dict:
+    """Start the real inspection over the validated images (background, pollable)."""
+    import threading
+
+    record = get_batch(batch_id)
+    if record is None:
+        raise _batch_error(BatchError("BATCH_NOT_FOUND", f"Batch '{batch_id}' does not exist.", None))
+    if record["status"] in {"inspecting", "complete"}:
+        return record
+    from app.vision.batch import mark_inspecting
+
+    mark_inspecting(batch_id)
+
+    def run() -> None:
+        try:
+            from app.vision.inference import VisionModel as _VisionModel
+
+            model = _VisionModel(VISION_MODEL_DIR)
+            inspect_batch(batch_id, model)
+        except Exception:  # noqa: BLE001 - failures are reflected in the batch record
+            record = get_batch(batch_id)
+            if record is not None:
+                record["status"] = "failed"
+                from app.vision.batch import _save as _save_batch
+
+                _save_batch(record)
+
+    threading.Thread(target=run, daemon=True).start()
+    return get_batch(batch_id)
+
+
+@app.get("/api/vision/batch/{batch_id}")
+def vision_batch_get(batch_id: str) -> dict:
+    record = get_batch(batch_id)
+    if record is None:
+        raise _batch_error(BatchError("BATCH_NOT_FOUND", f"Batch '{batch_id}' does not exist.", None))
+    return record
+
+
+@app.get("/api/vision/batches")
+def vision_batches_list(limit: int = 20) -> dict:
+    return {"batches": list_batches(limit=limit), "count": len(list_batches(limit=limit))}
+
+
+@app.get("/api/vision/review/queue")
+def vision_review_queue(include_reviewed: bool = False, limit: int = 100) -> dict:
+    queue = list_review_queue(VISION_MODEL_DIR, include_reviewed=include_reviewed, limit=limit)
+    return {"items": queue, "count": len(queue), "include_reviewed": include_reviewed}
+
+
+@app.get("/api/vision/review/stats")
+def vision_review_stats() -> dict:
+    return review_stats(VISION_MODEL_DIR)
+
+
+@app.post("/api/vision/inspect/{inspection_id}/review")
+def vision_inspect_review(inspection_id: str, body: dict | None = None) -> dict:
+    body = body or {}
+    action = body.get("action")
+    note = body.get("note")
+    class_name = body.get("class_name")
+    if not action:
+        raise _batch_error(ReviewError("REVIEW_ACTION_REQUIRED", "Provide 'action' in the request body.", None))
+    try:
+        return record_human_decision(VISION_MODEL_DIR, inspection_id, str(action), note, class_name)
+    except ReviewError as error:
+        raise _batch_error(error) from error

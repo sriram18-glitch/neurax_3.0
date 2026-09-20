@@ -640,6 +640,8 @@ export interface VisionMetrics {
   false_reject_rate: number | null;
   review_rate: number;
   decisions: { PASS: number; DEFECT: number; REVIEW: number };
+  decision_matrix?: Array<{ actual: string; counts: Record<string, number> }>;
+  decision_matrix_columns?: string[];
   per_class: Record<string, { precision: number; recall: number; f1: number; support: number }>;
   confusion_matrix: number[][];
 }
@@ -684,8 +686,20 @@ export interface VisionInspection {
   image_metadata: { width: number; height: number; mode: string; format: string; bytes: number };
   preprocessing: { resize: string; normalization: string; preprocessed_png_base64?: string; note?: string };
   prediction: { predicted_class: string; is_normal: boolean };
+  feature_vector?: { dim: number; values: number[]; note?: string };
+  class_distances?: Record<string, number>;
+  feature_space_point?: number[] | null;
   class_probabilities: Record<string, number>;
-  confidence: { value: number; level: string; method: string; limitations: string };
+  confidence: {
+    value: number;
+    raw_probability?: number;
+    level: string;
+    method: string;
+    calibration_status?: string;
+    calibration_method?: string;
+    model_version?: string | null;
+    limitations: string;
+  };
   anomaly_score: {
     value: number;
     novelty_score: number;
@@ -702,7 +716,17 @@ export interface VisionInspection {
     note: string;
   };
   decision: "PASS" | "DEFECT" | "REVIEW";
+  decision_reason?: string;
   review_reason: string | null;
+  review_reasons?: string[];
+  human_review?: {
+    action: string;
+    action_label: string;
+    decision: string;
+    at: string;
+    note: string | null;
+    ai_decision_preserved: string;
+  } | null;
   evidence: Array<{ statement: string; source: string; epistemic_status: string }>;
   process_link: { status: string; reason: string; available_metadata: string[] };
   model: { backbone?: string; trained_at?: string; classes: string[] };
@@ -719,4 +743,304 @@ export interface VisionInspectionSummary {
   anomaly_score: number;
   novelty_status: string;
   generated_at: string;
+}
+
+// ---------------------------------------------------------------------------
+// V2 - production stream, investigations, feature space, process timeline
+// ---------------------------------------------------------------------------
+
+export interface StreamFrame {
+  class_folder: string;
+  filename: string;
+}
+
+export interface StreamSummary {
+  inspection_id: string;
+  filename: string | null;
+  class_folder: string;
+  decision: string;
+  predicted_class: string;
+  confidence: number;
+  novelty_status: string;
+  at: string;
+}
+
+export interface StreamStatus {
+  label: string;
+  note: string;
+  station_id: string;
+  dataset_available: boolean;
+  dataset_error: string | null;
+  running: boolean;
+  speed: number;
+  speeds: number[];
+  cursor: number;
+  frame_number: number;
+  total_frames: number;
+  processed: number;
+  remaining: number;
+  session_started_at: string | null;
+  source: StreamSourceInfo | null;
+  next_frame: StreamFrame | null;
+  class_plan: {
+    order: string;
+    counts: Record<string, number>;
+    normal_class: string;
+    total_frames: number;
+  } | null;
+  last_summary: StreamSummary | null;
+  history: StreamSummary[];
+  decision_counts: Record<string, number>;
+}
+
+export interface StreamNextResponse {
+  inspection: VisionInspection | null;
+  exhausted: boolean;
+  status: StreamStatus;
+}
+
+export interface InvestigationStage {
+  id: string;
+  label: string;
+  status: "COMPLETE" | "REVIEW" | "DATA_GAP" | "AWAITING_INPUT" | "FAILED" | "PARTIAL";
+  summary: string;
+  detail: string | null;
+  epistemic: string;
+  payload: Record<string, unknown> | null;
+  duration_ms: number | null;
+  required_inputs?: string[];
+  available_inputs?: string[];
+}
+
+export interface InvestigationEvent {
+  at: string;
+  type: string;
+  message: string;
+  epistemic: string;
+  investigation_id: string;
+  inspection_id: string | null;
+}
+
+export interface InvestigationSummary {
+  investigation_id: string;
+  inspection_id: string | null;
+  source_id: string | null;
+  dataset_id: string | null;
+  generated_at: string;
+  status: string;
+  decision: string;
+  predicted_class: string | null;
+  confidence: number | null;
+  filename: string | null;
+  stage_summary: { complete: number; data_gap: number; awaiting_input: number; failed: number; partial: number };
+  top_action: string | null;
+}
+
+export interface InvestigationRecord extends InvestigationSummary {
+  station_id: string | null;
+  anomaly_score: number | null;
+  novelty_status: string | null;
+  review_reason: string | null;
+  stages: InvestigationStage[];
+  total_duration_s: number;
+  limitations: string[];
+  events: InvestigationEvent[];
+}
+
+export interface FeatureSpacePayload {
+  status: "AVAILABLE" | "NOT_TRAINED" | "NOT_AVAILABLE";
+  reason?: string;
+  method?: string;
+  components?: number;
+  explained_variance_ratio?: number[];
+  sampling?: string;
+  clouds: Record<string, number[][]>;
+  counts?: Record<string, number>;
+}
+
+export interface ProcessTimeline {
+  dataset_id: string;
+  status: "AVAILABLE" | "NOT_AVAILABLE";
+  reason?: string;
+  table?: string;
+  bins?: number;
+  order_basis?: string;
+  series: Array<{
+    station: string;
+    metric: string;
+    unit: string;
+    column: string;
+    values: number[];
+  }>;
+  drift_markers: Array<{ column: string; bin: number; direction: string; peak_ewma_z: number; epistemic: string }>;
+  event_markers: Array<{ bin: number; label: string }>;
+  event_definition: { target: string; direction: string; threshold: number; definition: string; epistemic: string } | null;
+  note?: string;
+  limitations?: string[];
+}
+
+// ---------------------------------------------------------------------------
+// V2.1 - batch/dataset inspection and the human review queue
+// ---------------------------------------------------------------------------
+
+export interface BatchImage {
+  original_name: string;
+  size_bytes: number;
+  class_folder: string | null;
+  sha256: string | null;
+  status: "valid" | "invalid" | "unsupported" | "duplicate";
+  reason: string | null;
+  width: number | null;
+  height: number | null;
+  format: string | null;
+  inspection_id?: string | null;
+}
+
+export interface BatchSummary {
+  total: number;
+  valid: number;
+  invalid: number;
+  unsupported: number;
+  duplicates: number;
+  classes: string[];
+  class_counts: Record<string, number>;
+  labels_available: boolean;
+  labels_note: string;
+  class_balance: string;
+  localization_annotations: string;
+  localization_note: string;
+  process_join: string;
+  process_join_note: string;
+}
+
+export interface BatchQuality {
+  basis: string;
+  tp: number;
+  tn: number;
+  fp: number;
+  fn: number;
+  false_accept_rate: number | null;
+  false_reject_rate: number | null;
+  precision: number | null;
+  recall: number | null;
+  f1: number | null;
+  review_rate: number | null;
+  note: string;
+}
+
+export interface BatchResult {
+  index: number;
+  inspection_id: string;
+  filename: string | null;
+  class_folder: string | null;
+  ground_truth: string | null;
+  decision: string;
+  confidence: number;
+  raw_probability?: number | null;
+  anomaly_score: number;
+  novelty_score: number;
+  novelty_status: string;
+  localization: boolean;
+  review_reason: string | null;
+  review_reasons: string[];
+}
+
+export interface BatchRecord {
+  batch_id: string;
+  created_at: string;
+  status: "validated" | "inspecting" | "complete" | "failed";
+  source: string;
+  summary: BatchSummary;
+  images: BatchImage[];
+  progress: { inspected: number; total: number };
+  decisions: { PASS: number; DEFECT: number; REVIEW: number };
+  review_queue: number;
+  quality: BatchQuality | null;
+  results: BatchResult[];
+  avg_confidence: number | null;
+  duration_s?: number;
+  note: string;
+}
+
+export type SourceType = "SINGLE_IMAGE" | "IMAGE_SET" | "FOLDER_DATASET" | "BUILT_IN_DEMO";
+
+export interface InspectionSource extends BatchRecord {
+  source_id: string;
+  source_type: SourceType;
+  type_label: string;
+  display_name: string;
+  demo_note?: string;
+  stream?: { cursor: number; processed: number; running: boolean; history: unknown[] };
+}
+
+export interface SourceSummary {
+  source_id: string;
+  source_type: SourceType;
+  type_label: string;
+  display_name: string;
+  created_at: string | null;
+  status: string;
+  summary: BatchSummary | null;
+  progress: { inspected: number; total: number } | null;
+  decisions: { PASS: number; DEFECT: number; REVIEW: number } | null;
+  review_queue: number | null;
+  stream: { cursor: number; processed: number; running: boolean } | null;
+}
+
+export interface StreamSourceInfo {
+  source_id: string;
+  source_type: SourceType;
+  type_label: string;
+  display_name: string;
+  image_count: number;
+  total: number;
+  labels_available: boolean;
+}
+
+export interface BatchSummaryListItem {
+  batch_id: string;
+  created_at: string | null;
+  status: string;
+  summary: BatchSummary | null;
+  progress: { inspected: number; total: number } | null;
+  decisions: { PASS: number; DEFECT: number; REVIEW: number } | null;
+  review_queue: number | null;
+}
+
+export interface ReviewQueueItem {
+  inspection_id: string;
+  source_id: string | null;
+  filename: string | null;
+  generated_at: string;
+  predicted_class: string | null;
+  confidence: number | null;
+  anomaly_score: number | null;
+  novelty_score: number | null;
+  novelty_status: string | null;
+  localization: boolean;
+  review_reason: string | null;
+  review_reasons: string[];
+  human_review: VisionInspection["human_review"];
+}
+
+export interface ReviewStats {
+  total: number;
+  auto_resolved: number;
+  human_reviewed: number;
+  pending_review: number;
+  auto_resolved_rate: number | null;
+  human_review_rate: number | null;
+  pending_review_rate: number | null;
+  distribution: { PASS: number; DEFECT: number; REVIEW: number };
+  distribution_rates: { PASS: number; DEFECT: number; REVIEW: number };
+  avg_confidence: number | null;
+  note: string;
+}
+
+export interface HumanReviewResponse {
+  inspection_id: string;
+  human_review: VisionInspection["human_review"];
+  ai_decision: string | null;
+  ai_confidence: number | null;
+  note: string;
 }

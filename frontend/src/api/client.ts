@@ -8,15 +8,28 @@ import type {
   ApiError,
   AssumptionsPayload,
   BaselinePayload,
+  BatchRecord,
+  BatchSummaryListItem,
   BottleneckAnalysis,
   DatasetContract,
   DatasetListItem,
+  FeatureSpacePayload,
+  HumanReviewResponse,
+  InspectionSource,
+  InvestigationRecord,
+  InvestigationSummary,
   MlSummary,
+  ProcessTimeline,
   Recommendation,
   RecommendationListResponse,
   RecommendationRun,
+  ReviewQueueItem,
+  ReviewStats,
   RootCauseAnalysis,
   ScenarioPayload,
+  SourceSummary,
+  StreamNextResponse,
+  StreamStatus,
   VisionInspection,
   VisionInspectionSummary,
   VisionModelStatus,
@@ -194,7 +207,158 @@ export const api = {
     request<{ inspection_id: string; stage_count: number; stages: VisionInspection["trace"]; note: string }>(
       `/api/vision/inspect/${inspectionId}/trace`,
     ),
+
+  // --- V2: production stream, feature space, timeline, investigations --------
+  streamStatus: () => request<StreamStatus>("/api/vision/stream/status"),
+
+  streamStart: () => request<StreamStatus>("/api/vision/stream/start", { method: "POST" }),
+
+  streamPause: () => request<StreamStatus>("/api/vision/stream/pause", { method: "POST" }),
+
+  streamResume: () => request<StreamStatus>("/api/vision/stream/resume", { method: "POST" }),
+
+  streamReset: () => request<StreamStatus>("/api/vision/stream/reset", { method: "POST" }),
+
+  streamSpeed: (speed: number) =>
+    request<StreamStatus>("/api/vision/stream/speed", { method: "POST", body: JSON.stringify({ speed }) }),
+
+  streamNext: () => request<StreamNextResponse>("/api/vision/stream/next", { method: "POST" }),
+
+  getFeatureSpace: () => request<FeatureSpacePayload>("/api/vision/feature-space"),
+
+  getProcessTimeline: (datasetId: string, bins = 48) =>
+    request<ProcessTimeline>(`/api/datasets/${datasetId}/process/timeline?bins=${bins}`),
+
+  runInvestigation: (inspectionId: string, datasetId?: string | null) =>
+    request<InvestigationRecord>("/api/investigations/run", {
+      method: "POST",
+      body: JSON.stringify({ inspection_id: inspectionId, dataset_id: datasetId ?? null }),
+    }),
+
+  listInvestigations: (limit = 50) =>
+    request<{ investigations: InvestigationSummary[]; count: number; note: string }>(
+      `/api/investigations?limit=${limit}`,
+    ),
+
+  getInvestigation: (investigationId: string) =>
+    request<InvestigationRecord>(`/api/investigations/${investigationId}`),
+
+  // --- V2.1: batch / dataset inspection ------------------------------------
+  createBatch: async (files: File[]) => {
+    const form = new FormData();
+    for (const file of files) form.append("files", file, file.name);
+    let response: Response;
+    try {
+      response = await fetch(`${API_BASE}/api/vision/batch`, { method: "POST", body: form });
+    } catch {
+      throw new ApiRequestError(0, null, `Cannot reach the analysis backend at ${API_BASE}. Is it running?`);
+    }
+    const text = await response.text();
+    let body: unknown = null;
+    if (text) {
+      try {
+        body = JSON.parse(text);
+      } catch {
+        body = null;
+      }
+    }
+    if (!response.ok) {
+      throw new ApiRequestError(response.status, (body as { detail?: ApiError })?.detail ?? null);
+    }
+    return body as BatchRecord;
+  },
+
+  inspectBatch: (batchId: string) =>
+    request<BatchRecord>(`/api/vision/batch/${batchId}/inspect`, { method: "POST" }),
+
+  getBatch: (batchId: string) => request<BatchRecord>(`/api/vision/batch/${batchId}`),
+
+  listBatches: (limit = 20) => request<{ batches: BatchSummaryListItem[]; count: number }>(`/api/vision/batches?limit=${limit}`),
+
+  getReviewQueue: (includeReviewed = false, limit = 100) =>
+    request<{ items: ReviewQueueItem[]; count: number; include_reviewed: boolean }>(
+      `/api/vision/review/queue?include_reviewed=${includeReviewed}&limit=${limit}`,
+    ),
+
+  getReviewStats: () => request<ReviewStats>("/api/vision/review/stats"),
+
+  reviewAction: (inspectionId: string, action: string, note?: string, className?: string) =>
+    request<HumanReviewResponse>(`/api/vision/inspect/${inspectionId}/review`, {
+      method: "POST",
+      body: JSON.stringify({ action, note: note ?? null, class_name: className ?? null }),
+    }),
+
+  // --- V2.3: runtime inspection sources ------------------------------------
+  listSources: (limit = 20) => request<{ sources: SourceSummary[]; count: number }>(`/api/inspection/sources?limit=${limit}`),
+
+  getCurrentSource: () => request<{ source: InspectionSource | null; note: string }>("/api/inspection/sources/current"),
+
+  getSource: (sourceId: string) => request<InspectionSource>(`/api/inspection/sources/${sourceId}`),
+
+  createSource: (files: File[], sourceType: string, displayName?: string) => {
+    const form = new FormData();
+    for (const file of files) form.append("files", file, file.name);
+    form.append("source_type", sourceType);
+    if (displayName) form.append("display_name", displayName);
+    return createSourceUpload(form);
+  },
+
+  createDemoSource: () => {
+    const form = new FormData();
+    form.append("source_type", "BUILT_IN_DEMO");
+    return createSourceUpload(form);
+  },
+
+  sourceStart: (sourceId: string) => request<StreamStatus>(`/api/inspection/sources/${sourceId}/start`, { method: "POST" }),
+
+  sourceNext: (sourceId: string) => request<StreamNextResponse>(`/api/inspection/sources/${sourceId}/next`, { method: "POST" }),
+
+  sourceReset: (sourceId: string) => request<StreamStatus>(`/api/inspection/sources/${sourceId}/reset`, { method: "POST" }),
+
+  sourcePause: (sourceId: string) => request<StreamStatus>(`/api/inspection/sources/${sourceId}/pause`, { method: "POST" }),
+
+  sourceInspect: (sourceId: string) => request<InspectionSource>(`/api/inspection/sources/${sourceId}/inspect`, { method: "POST" }),
+
+  sourceAddFiles: (sourceId: string, files: File[]) => {
+    const form = new FormData();
+    for (const file of files) form.append("files", file, file.name);
+    return sourceUpload(form, sourceId);
+  },
+
+  deleteSource: (sourceId: string) => request<{ deleted: string; note: string }>(`/api/inspection/sources/${sourceId}`, { method: "DELETE" }),
 };
+
+/** Multipart upload helper for source creation (no JSON content-type). */
+async function createSourceUpload(form: FormData): Promise<InspectionSource> {
+  return multipartRequest<InspectionSource>("/api/inspection/sources", form);
+}
+
+/** Multipart upload helper for appending files to a source. */
+async function sourceUpload(form: FormData, sourceId: string): Promise<InspectionSource> {
+  return multipartRequest<InspectionSource>(`/api/inspection/sources/${sourceId}/files`, form);
+}
+
+async function multipartRequest<T>(path: string, form: FormData): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, { method: "POST", body: form });
+  } catch {
+    throw new ApiRequestError(0, null, `Cannot reach the analysis backend at ${API_BASE}. Is it running?`);
+  }
+  const text = await response.text();
+  let body: unknown = null;
+  if (text) {
+    try {
+      body = JSON.parse(text);
+    } catch {
+      body = null;
+    }
+  }
+  if (!response.ok) {
+    throw new ApiRequestError(response.status, (body as { detail?: ApiError })?.detail ?? null);
+  }
+  return body as T;
+}
 
 export async function inspectImageFile(file: File): Promise<VisionInspection> {
   const form = new FormData();

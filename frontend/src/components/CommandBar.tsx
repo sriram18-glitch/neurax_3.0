@@ -1,17 +1,17 @@
 import { useMemo, useState } from "react";
-import { ChevronDown, RefreshCw, RotateCcw, ScanSearch, Upload } from "lucide-react";
+import { ChevronDown, FolderOpen, RefreshCw, RotateCcw, ScanSearch, Upload } from "lucide-react";
 
 import { useSession } from "../session/SessionContext";
 
-export function CommandBar({ onUploadClick }: { onUploadClick: () => void }) {
-  const { contract, datasets, datasetId, loadDataset, busy, refreshDatasets, refreshVision, backendOnline, visionStatus, reset } =
+export function CommandBar({ onUploadClick, onAddInspectionData }: { onUploadClick: () => void; onAddInspectionData: () => void }) {
+  const { contract, datasets, datasetId, loadDataset, busy, refreshDatasets, refreshVision, backendOnline, visionStatus, reset, currentSource } =
     useSession();
   const [open, setOpen] = useState(false);
 
   const datasetLabel = useMemo(() => contract?.filename ?? "No process dataset", [contract]);
 
   return (
-    <header className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-line bg-bg-2/70 px-4 py-2.5 backdrop-blur">
+    <header className="relative z-40 flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-line bg-bg-2/70 px-4 py-2.5 backdrop-blur">
       <div className="flex items-center gap-3">
         <div className="flex h-6 w-6 items-center justify-center border border-cyan/50 bg-cyan/10">
           <span className="font-mono text-[10px] font-bold text-cyan">NX</span>
@@ -88,6 +88,23 @@ export function CommandBar({ onUploadClick }: { onUploadClick: () => void }) {
           tone={visionStatus?.model_available ? "ok" : "idle"}
         />
       </dl>
+
+      <button
+        type="button"
+        onClick={onAddInspectionData}
+        className={`flex items-center gap-2 border px-3 py-1.5 text-left transition-colors hover:border-cyan/50 ${
+          currentSource ? "border-ok/40 bg-ok/5" : "border-warn/40 bg-warn/5"
+        }`}
+        title="Add an image, image set or folder - or change the current inspection source"
+      >
+        <FolderOpen size={12} className={currentSource ? "text-ok" : "text-warn"} aria-hidden />
+        <span className="min-w-0">
+          <span className="text-2xs uppercase tracking-[0.12em] text-ink-3">Inspection source</span>
+          <span className="block max-w-[180px] truncate text-xs text-ink">
+            {currentSource ? `${currentSource.type_label} · ${currentSource.display_name}` : "No source selected"}
+          </span>
+        </span>
+      </button>
 
       <div className="ml-auto flex items-center gap-2">
         <button

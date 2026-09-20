@@ -1,94 +1,125 @@
-# NeuraX — Judge Demo Script (3–5 minutes, inspection-first)
+# NeuraX — Judge Demo Script (3–4 minutes, automation-first)
 
-**Setup before judging:** run `.\start_demo.ps1` from the project root, wait for
-`CONTROL ROOM: http://localhost:4173`, open it. Keep a defect image and a normal image from
-`train\train\scratch\` and `train\train\normal\` on the desktop for quick dragging.
+**Setup:** run `.\start_demo.ps1`, wait for `WORKSTATION: http://localhost:4173`, open it.
+Keep a foreign image (e.g., a cat photo) on the desktop for the robustness moment.
 
-**Demo images (real dataset):** `train\train\scratch\scratch_00000.png` (defect),
-`train\train\normal\normal_00000.png` (normal). Any cat photo works for the novelty moment.
+**The story in one sentence:** NEURAX automatically turns production inspection events into an
+evidence-backed industrial investigation — detection is only the first step.
 
 ---
 
-## 00:00–00:20 — Open the workstation
+## 0:00 — Start automation
 
-- The app opens on **INSPECT**. Point out the command bar: **Backend ONLINE**, **Vision model READY
-  · 5 classes**.
-- Say: *"This is an industrial inspection workstation. The image is processed by a real pipeline —
-  a pretrained backbone, a calibrated classifier, an anomaly model and a localization stage — and
-  every decision is traceable. No mock data anywhere."*
+- The app opens on **COMMAND CENTER**. Point out the command bar: **Backend ONLINE**,
+  **Vision model READY · 5 classes**.
+- Press **START DEMO** (top right) — or **START AUTOMATED INSPECTION** in the automation strip.
+- Say: *"This starts a simulated production stream over the real image dataset — real frames,
+  deterministic order, no randomness. Every frame runs the real trained pipeline."*
 
-## 00:20–01:00 — Inspect a defective part (live animated pipeline)
+## 0:15 — The first inspection event
 
-- Drag `scratch_00000.png` into the theater.
-- **The inspection plays like a video**: a scanline sweeps the part while the backend works; stages light
-  up one by one in the **Live pipeline** rail (validation → preprocessing → feature extraction →
-  classification → anomaly analysis → localization → confidence → decision), each with its real
-  duration and output.
-- The **preprocessed 224×224 tensor flips in**, the **anomaly heatmap fades over the image**, the
-  **region box draws itself**, and the **DEFECT stamp slams in** — all driven by real backend events.
-- The three live panels below fill as the stages complete: animated class-probability bars, the
-  anomaly gauge sweeping to its real percentile, and the decision card with calibrated confidence.
-- Say: *"This is a live event stream from the backend — not a replay. Each stage appears the moment
-  it actually completes. Cinematic pacing only slows the display so you can read it; the toggle
-  switches to raw backend speed."*
+- Watch the **Production Stream** panel: frame counter advances, PASS/DEFECT/REVIEW counters move,
+  recent frames list fills with real filenames.
+- The **Active Event** panel shows the current image, decision, class and calibrated confidence.
+- Say: *"No upload step. The system observes the line and decides by itself."*
 
-## 01:00–01:40 — The AI Console (show the real processing)
+## 0:30 — The AI investigation pipeline
 
-- Switch to **CONSOLE**.
-- Walk down the ten stages with their real metrics: image dimensions, resize, backbone name,
-  embedding size, predicted class and probabilities, Mahalanobis distance, CAM method, confidence
-  level, decision thresholds.
-- Say: *"This is the observable engineering pipeline — every value was produced by the backend
-  during this inspection. It is not the model's private reasoning; it's what we can measure."*
+- The **AI investigation pipeline** chips light up: inspection → classification → localization →
+  robustness → process link → root cause → bottleneck → impact → what-if → action.
+- Say: *"On an actionable decision the investigation chain runs automatically — the operator does
+  not open eight pages."*
 
-## 01:40–02:20 — Unseen-condition honesty (the differentiator)
+## 0:40 — Add data: the three input workflows
 
-- Back in **INSPECT**, drag a foreign image (e.g., a photo that is clearly not a part).
-- Result: **REVIEW** with **novelty HIGH** and the reason: *"the sample does not resemble the known
-  class it was assigned to; not forced into a known defect class."*
-- Say: *"This is robustness to unseen conditions: the system refuses to invent a defect label for
-  something it has never seen. That is exactly what a factory inspection station must do."*
-- Then drag `normal_00000.png` → **PASS**.
+- Press **+ ADD INSPECTION DATA** (top bar). The modal shows the three workflows:
+  **INSPECT IMAGE**, **ADD BATCH / DATASET**, **AUTO PRODUCTION STREAM**.
+- Choose **ADD BATCH / DATASET** and drop several real images.
+- The **data-health report** appears immediately: valid / invalid / unsupported / duplicates,
+  labels available from class folders, localization annotations and process join honestly
+  reported as NOT AVAILABLE.
+- Press **START AUTO CHECK** — every image runs through the real pipeline with live progress.
 
-## 02:20–03:00 — Decision chain
+## 1:00 — Batch results, gallery and measured quality
 
-- Switch to **DECISION**.
-- Walk the chain: **WHAT** (class + probabilities), **WHERE** (region coordinates, model-derived),
-  **HOW CERTAIN** (confidence, anomaly, novelty, calibration), **WHY** (evidence with epistemic
-  labels), **WHAT NEXT** (process context).
-- Show the **thresholds panel**: pass/defect confidence gates and the **measured** false-accept,
-  false-reject and review rates on the held-out test split.
-- Say: *"Operators can see exactly why the threshold produced this decision — and what it costs in
-  false accepts versus manual review."*
+- The **dataset inspection complete** dashboard shows real PASS / DEFECT / REVIEW counts, average
+  confidence, and **decision quality measured against the class-folder ground truth**: TP / TN /
+  FP / FN, false accept, false reject, precision, recall, F1.
+- Walk the **inspection gallery** — every card has its image, result, confidence bar and novelty
+  tag; use the ALL / PASS / DEFECT / REVIEW / NOVEL / LOW CONFIDENCE filters and filename search.
+- Click a card to open the full inspection view.
 
-## 03:00–04:00 — Process context and the wider chain
+## 1:15 — Human review queue
 
-- Switch to **CONTROL ROOM**. Select a previously processed dataset (e.g., `Model_1.csv`) from the
-  process dataset dropdown.
-- Show the **process flow** with the candidate constraint, the observed throughput, and the top
-  advisory action.
-- Open **Station constraint ranking** and click **WHY THIS STATION?** → evidence drawer with the real
-  utilization, queue, score formula and epistemic labels.
-- Say: *"Inspection is the entry point; the same evidence discipline extends to the production line —
-  bottleneck, root cause and recommendations."*
+- Return to the **COMMAND CENTER**. If any sample was uncertain, the banner reads
+  **⚠ N INSPECTIONS REQUIRE HUMAN REVIEW**.
+- The **AI investigation pipeline** is a result timeline: each stage shows its real result and
+  status — COMPLETE (green), DATA GAP / INPUT REQUIRED (amber) with the exact inputs needed,
+  FAILED (red). The **data coverage** grid shows *capability: READY* for every engine and marks
+  the *data* state (INPUT REQUIRED / DATA GAP) with actions like + ADD PROCESS DATA.
+- Click **Review queue** → the **human review workspace**: the actual review images, the AI
+  decision with confidence, novelty, anomaly, thresholds and explicit reasons — then decide:
+  **CONFIRM DEFECT**, **CONFIRM SCRATCH/…**, **MARK PASS**, **KEEP IN REVIEW** or **ESCALATE**.
+- Say: *"Automate the certain, escalate the uncertain. The AI decision and its evidence are
+  preserved next to the human decision — nothing is overwritten."*
 
-## 04:00–04:40 — Economics and what-if (optional if time)
+## 1:30 — The visual AI pipeline and evidence (Inspection view)
 
-- Open **Economics & assumptions**: the datasets have no cost columns, so everything reads
-  `NOT AVAILABLE` until assumptions are supplied. Enter margin/hours → baseline becomes
-  **CALCULATED**.
-- Open **What-if simulator** → run **Throughput change (user assumption)** → BASELINE vs SIMULATED
-  with the explicit acknowledgement guard.
-- Say: *"We never invent economics. Under supplied assumptions, the simulation indicates a change —
-  labeled SIMULATED, not a forecast."*
+- Click **INSPECTION**. Scroll to **FEATURE SPACE**: the real training embeddings (2-D PCA) with
+  the current sample projected into the same space.
+- Click a pipeline node (e.g., **Classify**) → plain-language output → **View technical evidence**
+  → the drawer with the raw metrics.
+- Optional: switch to **MANUAL INSPECTION** and drop the foreign photo → **REVIEW** with the
+  unknown-condition reason.
+- Say: *"The main screen shows meaning; the raw engineering values live behind this button.
+  No private chain-of-thought is exposed — only observable outputs."*
 
-## 04:40–05:00 — Closing
+## 1:45 — The investigation and replay
 
-- Return to **INSPECT**.
-- Say: *"One workstation: a real image pipeline with calibrated confidence and honest novelty
-  handling, connected to a real process analytics chain — root cause, bottleneck, economics and
-  advisory recommendations. Every claim is traceable to data or an explicit assumption, and
-  anything we cannot support is reported as NOT AVAILABLE instead of being fabricated."*
+- Click **INVESTIGATION HISTORY**. The stored investigation is listed with its stage summary.
+- Press **PLAY INVESTIGATION** and step through the stages; point at the **DATA GAP** stages.
+- Say: *"Honest gaps: without a process dataset the correlation stages report DATA GAP with the
+  reason — they do not invent a relationship."*
+
+## 2:00 — Root cause
+
+- Click **PROCESS INTELLIGENCE**; select a processed dataset (`Model_1.csv`) in the top bar.
+- Stage **02 ROOT CAUSE**: run it, then walk the **Factor associations** ranking and the
+  **association graph** (event → factors → leading hypothesis).
+- Say: *"Statistical association, never causation."*
+
+## 2:15 — Bottleneck and flow
+
+- Stage **03 FLOW**: the process map with the candidate constraint highlighted, the
+  **Bottleneck evidence** component bars and the observed constrained-vs-unconstrained comparison.
+- Say: *"A bottleneck is an evidence-based hypothesis with named supporting signals — not a claim."*
+
+## 2:30 — Impact
+
+- Stage **04 IMPACT**: the **Impact flow** chain — observed throughput → units/day → daily →
+  monthly contribution, each step a stored value with its formula and epistemic badge.
+- Without assumptions everything reads **NOT AVAILABLE**; supply margin/hours and press
+  **Recompute baseline**.
+- Say: *"We never invent economics. Under supplied assumptions the numbers are CALCULATED."*
+
+## 2:40 — What-if
+
+- Run a **utilization reduction** scenario. Point at BASELINE → SCENARIO → DELTA and the
+  **SIMULATION** badge.
+- Say: *"Assumption-based simulation, labelled as such — not a forecast."*
+
+## 2:50 — Recommendation
+
+- Stage **05 ACTION**: advisory cards with priority, evidence quality, why-text and source signals.
+- Say: *"Deterministic rules over the stored evidence — investigate, review, evaluate. NEURAX is
+  advisory; it never touches the machine."*
+
+## 3:00 — Close
+
+- Return to **COMMAND CENTER**; point at the review statistics, the event feed, the automation
+  principle (**automate the certain, escalate the uncertain**) and the **evaluation coverage** map.
+- Say: *"Detect, explain, correlate, investigate, constrain, simulate, recommend — from detection
+  to decision. Every claim is traceable to a model output, the data, or an explicit assumption."*
 
 ---
 
@@ -96,9 +127,10 @@
 
 | Symptom | Recovery |
 |---|---|
-| Backend offline banner | Start the backend (`start_demo.ps1`), click Refresh |
-| Vision model NOT TRAINED | Click **Train vision model** (≈2–3 min on CPU) |
-| Wrong image / want to re-run | Click **New image** and drop another file |
-| Process dataset not selected | Command bar → process dataset dropdown → pick a processed dataset |
-| Economics NOT AVAILABLE | Supply the assumptions listed in the panel |
-| Slow first inspection | The first inference warms the backbone (~1–2 s); later images run in ~0.3 s |
+| Backend offline banner | Start `start_demo.ps1`, click Refresh |
+| Vision model NOT TRAINED | Inspection → **Train vision model** (≈2–3 min CPU) |
+| Stream paused / exhausted | Press **Restart stream** (or Reset, then Start) |
+| No investigation appears | Auto investigation is off, or the decisions so far were PASS — keep the stream running until a DEFECT/REVIEW |
+| Process stages show DATA GAP | Select a processed dataset in the top bar |
+| Economics NOT AVAILABLE | Supply assumptions in stage 04 IMPACT |
+| Batch shows no labels | Add images with class-folder names (`normal/…`, `scratch/…`) so ground truth is measured |

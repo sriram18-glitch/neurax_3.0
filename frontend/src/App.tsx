@@ -1,24 +1,32 @@
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useCallback, useState } from "react";
-import { GitBranch, LayoutDashboard, ScanSearch, Terminal } from "lucide-react";
+import { FolderPlus, History, LayoutDashboard, Play, ScanSearch, Square, Workflow } from "lucide-react";
 
 import { CommandBar } from "./components/CommandBar";
-import { ConsoleView } from "./components/ConsoleView";
-import { ControlRoomView } from "./components/ControlRoomView";
-import { DecisionView } from "./components/DecisionView";
+import { CommandCenter } from "./components/CommandCenter";
 import { EvidenceDrawer, type EvidenceItem } from "./components/EvidenceDrawer";
-import { InspectionView } from "./components/InspectionView";
 import type { OpenEvidence } from "./components/evidence";
+import { InspectionStudio } from "./components/InspectionStudio";
+import { InvestigationHistory } from "./components/InvestigationHistory";
+import { ProcessIntelligence } from "./components/ProcessIntelligence";
+import { AddDataModal } from "./components/neurax/AddDataModal";
 import { useSession } from "./session/SessionContext";
-import type { BottleneckFinding, Recommendation, RootCauseFinding } from "./types/api";
 import { SessionProvider } from "./session/SessionContext";
+import { useStreamLoop } from "./session/useStreamLoop";
+import type { BottleneckFinding, Recommendation, RootCauseFinding } from "./types/api";
 
-type ViewId = "inspect" | "console" | "decision" | "control";
+type ViewId = "command" | "inspection" | "process" | "history";
+
+interface AddDataTarget {
+  view: ViewId;
+  mode?: "auto" | "imageset" | "folder" | "single";
+}
 
 const VIEWS: Array<{ id: ViewId; label: string; icon: typeof ScanSearch }> = [
-  { id: "inspect", label: "Inspect", icon: ScanSearch },
-  { id: "console", label: "Console", icon: Terminal },
-  { id: "decision", label: "Decision", icon: GitBranch },
-  { id: "control", label: "Control Room", icon: LayoutDashboard },
+  { id: "command", label: "Command Center", icon: LayoutDashboard },
+  { id: "inspection", label: "Inspection", icon: ScanSearch },
+  { id: "process", label: "Process Intelligence", icon: Workflow },
+  { id: "history", label: "Investigation History", icon: History },
 ];
 
 interface DrawerState {
@@ -33,16 +41,38 @@ const CLOSED_DRAWER: DrawerState = { open: false, title: "", items: [] };
 
 function Workspace() {
   const session = useSession();
-  const { bottleneck, busy, error, errorStage, backendOnline } = session;
-  const [view, setView] = useState<ViewId>("inspect");
+  const { bottleneck, busy, error, errorStage, backendOnline, stream, setAutoInvestigation } = session;
+  const [view, setView] = useState<ViewId>("command");
   const [drawer, setDrawer] = useState<DrawerState>(CLOSED_DRAWER);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [addDataOpen, setAddDataOpen] = useState(false);
+  const [addDataTarget, setAddDataTarget] = useState<AddDataTarget | null>(null);
+  const [reviewRequest, setReviewRequest] = useState(0);
+  const [demoActive, setDemoActive] = useState(false);
+  const reduceMotion = useReducedMotion();
+  useStreamLoop();
+
+  const openAddData = useCallback((target: AddDataTarget) => {
+    setAddDataTarget(target);
+    setAddDataOpen(false);
+    setView(target.view);
+  }, []);
 
   const closeDrawer = useCallback(() => setDrawer((current) => ({ ...current, open: false })), []);
 
   const openEvidence = useCallback<OpenEvidence>((title, subtitle, items, limitations) => {
     setDrawer({ open: true, title, subtitle, items, limitations });
   }, []);
+
+  const startDemo = useCallback(async () => {
+    setAutoInvestigation(true);
+    setDemoActive(true);
+    setView("command");
+    // demo uses the optional bundled dataset, clearly labelled BUILT-IN DEMO;
+    // the normal production flow never falls back to it
+    await session.createDemoSource();
+    await session.startStream();
+  }, [session, setAutoInvestigation]);
 
   const openStationEvidence = useCallback(
     (station: string) => {
@@ -90,7 +120,7 @@ function Workspace() {
       if (finding.root_cause_evidence?.best_factor) {
         items.push({
           statement: `Root-cause evidence: '${finding.root_cause_evidence.best_factor}' (score ${finding.root_cause_evidence.best_score}).`,
-          detail: "Statistical association from Phase 6 — not causation.",
+          detail: "Statistical association from the root-cause engine — not causation.",
           source_artifact: "root_cause/findings",
           epistemic_status: "STATISTICAL_ASSOCIATION",
           value: finding.root_cause_evidence.best_score,
@@ -113,7 +143,7 @@ function Workspace() {
         statement: "Spearman correlation with the target.",
         detail: finding.evidence.correlation.available
           ? `rho=${finding.evidence.correlation.spearman_r}, n=${finding.evidence.correlation.n}`
-          : finding.evidence.correlation.reason ?? "unavailable",
+          : (finding.evidence.correlation.reason ?? "unavailable"),
         source_artifact: "root_cause/findings",
         epistemic_status: finding.evidence.correlation.available ? "STATISTICAL_ASSOCIATION" : "NOT_AVAILABLE",
         value: finding.evidence.correlation.spearman_r ?? null,
@@ -122,16 +152,16 @@ function Workspace() {
         statement: "Mutual information vs permutation baseline.",
         detail: finding.evidence.mutual_information.available
           ? `MI=${finding.evidence.mutual_information.mi}, baseline=${finding.evidence.mutual_information.mi_permutation_baseline}`
-          : finding.evidence.mutual_information.reason ?? "unavailable",
+          : (finding.evidence.mutual_information.reason ?? "unavailable"),
         source_artifact: "root_cause/findings",
         epistemic_status: finding.evidence.mutual_information.available ? "STATISTICAL_ASSOCIATION" : "NOT_AVAILABLE",
         value: finding.evidence.mutual_information.mi ?? null,
       },
       {
-        statement: "Phase 4 model contribution.",
+        statement: "Process-model contribution.",
         detail: finding.evidence.model_contribution.available
           ? `importance ${finding.evidence.model_contribution.importance} via ${finding.evidence.model_contribution.method}`
-          : finding.evidence.model_contribution.reason ?? "not in saved top features",
+          : (finding.evidence.model_contribution.reason ?? "not in saved top features"),
         source_artifact: "models/<model_id>/feature_importance.json",
         epistemic_status: finding.evidence.model_contribution.available ? "MODEL_CONTRIBUTION" : "NOT_AVAILABLE",
         value: finding.evidence.model_contribution.importance ?? null,
@@ -164,7 +194,7 @@ function Workspace() {
 
   return (
     <div className="flex h-screen min-h-0 flex-col">
-      <CommandBar onUploadClick={() => setUploadOpen(true)} />
+      <CommandBar onUploadClick={() => setUploadOpen(true)} onAddInspectionData={() => setAddDataOpen(true)} />
       <nav className="flex items-stretch overflow-x-auto border-b border-line bg-bg-2/40 px-1 sm:px-2" aria-label="Primary navigation">
         {VIEWS.map(({ id, label, icon: Icon }, index) => (
           <button
@@ -181,15 +211,58 @@ function Workspace() {
             </span>
             <Icon size={14} aria-hidden />
             <span className="text-2xs font-semibold uppercase tracking-[0.12em] sm:text-xs sm:tracking-[0.14em]">{label}</span>
-            {view === id && (
-              <span className="absolute inset-x-2 bottom-0 h-px bg-cyan" aria-hidden />
-            )}
+            {view === id && <motion.span layoutId="primary-nav-underline" className="absolute inset-x-2 bottom-0 h-px bg-cyan" aria-hidden />}
           </button>
         ))}
-        <div className="ml-auto hidden items-center px-4 text-2xs text-ink-3 lg:flex">
-          {backendOnline === false ? "API unreachable" : "industrial inspection workstation"}
+        <div className="ml-auto flex items-center gap-3 px-3">
+          <button
+            type="button"
+            className="btn-primary !px-3 !py-1.5"
+            onClick={() => setAddDataOpen(true)}
+            title="Add inspection data: one image, a batch, or the automated stream"
+          >
+            <FolderPlus size={12} aria-hidden />
+            Add inspection data
+          </button>
+          {demoActive ? (
+            <button
+              type="button"
+              className="btn border-warn/50 bg-warn/10 text-warn !px-3 !py-1.5"
+              onClick={() => {
+                setDemoActive(false);
+                void session.pauseStream();
+              }}
+            >
+              <Square size={11} aria-hidden />
+              Stop demo
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn-primary !px-3 !py-1.5"
+              onClick={startDemo}
+              disabled={!stream?.dataset_available}
+              title="Starts the real automated stream and the real investigation chain."
+            >
+              <Play size={11} aria-hidden />
+              Start demo
+            </button>
+          )}
+          <span className="hidden text-2xs text-ink-3 lg:inline">
+            {backendOnline === false ? "API unreachable" : "visual decision engine · industrial inspection workstation"}
+          </span>
         </div>
       </nav>
+
+      {demoActive && (
+        <div className="border-b border-cyan/30 bg-cyan/5 px-4 py-1.5">
+          <p className="text-center font-mono text-2xs text-cyan">
+            DEMO MODE — running the real application: automated stream → inspection → decision → auto investigation.
+            {" "}Use the navigation to follow the chain; nothing here is prerecorded.
+          </p>
+        </div>
+      )}
+
       {backendOnline === false && (
         <div className="border-b border-bad/40 bg-bad/10 px-4 py-1.5 text-center">
           <p className="text-2xs font-semibold uppercase tracking-[0.14em] text-bad">
@@ -198,17 +271,46 @@ function Workspace() {
         </div>
       )}
       <main className="min-h-0 flex-1 overflow-y-auto">
-        {view === "inspect" && <InspectionView onOpenEvidence={openEvidence} />}
-        {view === "console" && <ConsoleView />}
-        {view === "decision" && <DecisionView />}
-        {view === "control" && (
-          <ControlRoomView
-            onStationEvidence={openStationEvidence}
-            onFactorEvidence={openFactorEvidence}
-            onRecommendationEvidence={openRecommendationEvidence}
-            onUploadClick={() => setUploadOpen(true)}
-          />
-        )}
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={view}
+            initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={reduceMotion ? undefined : { opacity: 0, y: -6 }}
+            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+          >
+            {view === "command" && (
+              <CommandCenter
+                onGoInspection={() => setView("inspection")}
+                onGoAnalysis={() => setView("process")}
+                onGoHistory={() => setView("history")}
+                onGoReview={() => {
+                  setReviewRequest((current) => current + 1);
+                  setView("history");
+                }}
+                onOpenEvidence={openEvidence}
+                onAddProcessData={() => setUploadOpen(true)}
+              />
+            )}
+            {view === "inspection" && (
+              <InspectionStudio
+                onOpenEvidence={openEvidence}
+                onGoAnalysis={() => setView("process")}
+                modeRequest={addDataTarget && addDataTarget.view === "inspection" ? addDataTarget : null}
+                onAddData={() => setAddDataOpen(true)}
+              />
+            )}
+            {view === "process" && (
+              <ProcessIntelligence
+                onStationEvidence={openStationEvidence}
+                onFactorEvidence={openFactorEvidence}
+                onRecommendationEvidence={openRecommendationEvidence}
+                onUploadClick={() => setUploadOpen(true)}
+              />
+            )}
+            {view === "history" && <InvestigationHistory onGoInspection={() => setView("inspection")} reviewRequest={reviewRequest} />}
+          </motion.div>
+        </AnimatePresence>
       </main>
 
       {busy && (
@@ -240,6 +342,22 @@ function Workspace() {
       />
 
       {uploadOpen && <UploadModal onClose={() => setUploadOpen(false)} />}
+
+      {addDataOpen && (
+        <AddDataModal
+          onClose={() => setAddDataOpen(false)}
+          onImage={() => openAddData({ view: "inspection", mode: "single" })}
+          onImageSet={() => openAddData({ view: "inspection", mode: "imageset" })}
+          onFolder={() => openAddData({ view: "inspection", mode: "folder" })}
+          onDemo={() => {
+            setAddDataOpen(false);
+            setDemoActive(true);
+            void session.createDemoSource().then(() => {
+              setView("inspection");
+            });
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -250,7 +368,7 @@ function UploadModal({ onClose }: { onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-6" role="dialog" aria-modal="true">
       <div
-        className={`panel w-full max-w-md px-6 py-6 ${dragging ? "border-cyan/50" : ""}`}
+        className={`hud w-full max-w-md px-6 py-6 ${dragging ? "border-cyan/50" : ""}`}
         onDragOver={(event) => {
           event.preventDefault();
           setDragging(true);
