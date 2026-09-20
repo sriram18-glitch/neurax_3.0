@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { API_BASE } from "../api/client";
 import { useSession } from "../session/SessionContext";
+import { clipboardImageFiles } from "./neurax/clipboard";
 import type { VisionTraceStage } from "../types/api";
 import type { OpenEvidence } from "./evidence";
 import { AIInferencePipeline, PIPELINE_NODE_TRACE } from "./neurax/AIInferencePipeline";
@@ -122,6 +123,22 @@ export function InspectionStudio({
   useEffect(() => {
     setZoom(1);
   }, [inspection?.inspection_id]);
+
+  // single-image paste support: copy an image and press Ctrl+V anywhere
+  useEffect(() => {
+    if (mode !== "single") return;
+    const onPaste = (event: ClipboardEvent) => {
+      const files = clipboardImageFiles(event);
+      const file = files[0];
+      if (!file) return;
+      event.preventDefault();
+      setMode("single");
+      setReplayCount(null);
+      void inspectFile(file);
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [mode, inspectFile]);
 
   const openTechnical = useCallback(
     (nodeId: string) => {
@@ -390,8 +407,9 @@ export function InspectionStudio({
               <ScanLine size={24} className="text-ink-3" aria-hidden />
               <p className="text-sm text-ink-2">Drop an inspection image — the real pipeline runs live</p>
               <p className="max-w-md text-2xs leading-relaxed text-ink-3">
-                The same pipeline that powers the automated stream: validation, preprocessing, backbone embedding,
-                calibrated classification, anomaly analysis, localization and the PASS/DEFECT/REVIEW decision.
+                Or copy an image and press <span className="text-cyan">Ctrl+V</span> to paste it. The same pipeline that
+                powers the automated stream: validation, preprocessing, backbone embedding, calibrated classification,
+                anomaly analysis, localization and the PASS/DEFECT/REVIEW decision.
               </p>
             </div>
           </HudPanel>

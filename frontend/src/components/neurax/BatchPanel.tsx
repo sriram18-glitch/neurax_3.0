@@ -1,8 +1,9 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { FileUp, FolderOpen, Play, ScanLine, UploadCloud, X } from "lucide-react";
 
 import { useSession } from "../../session/SessionContext";
 import { useBatchPoll } from "../../session/useBatchPoll";
+import { clipboardImageFiles } from "./clipboard";
 import type { BatchRecord } from "../../types/api";
 import { DataGap } from "./DataGap";
 import { EvidenceBadge } from "./EvidenceBadge";
@@ -23,8 +24,7 @@ export function BatchPanel({ mode = "image-set" }: { mode?: "image-set" | "folde
   useBatchPoll(batch?.status === "inspecting" ? batch.batch_id : null);
 
   const handleFiles = useCallback(
-    (files: FileList | null) => {
-      const list = files ? Array.from(files) : [];
+    (list: File[]) => {
       if (list.length === 0) return;
       const display = list.length === 1 ? list[0].name : `${list.length} files`;
       setFileName(display);
@@ -33,6 +33,21 @@ export function BatchPanel({ mode = "image-set" }: { mode?: "image-set" | "folde
     },
     [createSource, mode],
   );
+
+  // paste support: images copied to the clipboard (e.g. from a file manager
+  // or a screenshot) can be dropped in with Ctrl+V
+  useEffect(() => {
+    if (batch) return;
+    const onPaste = (event: ClipboardEvent) => {
+      const files = clipboardImageFiles(event);
+      if (files.length === 0) return;
+      event.preventDefault();
+      setFileName(files.length === 1 ? files[0].name : `${files.length} pasted images`);
+      handleFiles(files);
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [batch, handleFiles]);
 
   if (!batch) {
     return (
@@ -43,11 +58,11 @@ export function BatchPanel({ mode = "image-set" }: { mode?: "image-set" | "folde
             setDragging(true);
           }}
           onDragLeave={() => setDragging(false)}
-          onDrop={(event) => {
-            event.preventDefault();
-            setDragging(false);
-            handleFiles(event.dataTransfer.files);
-          }}
+onDrop={(event) => {
+              event.preventDefault();
+              setDragging(false);
+              handleFiles(Array.from(event.dataTransfer.files));
+            }}
           className={`flex flex-col items-center gap-4 px-6 py-14 text-center ${dragging ? "ring-1 ring-cyan/50" : ""}`}
         >
           <div className="flex h-12 w-12 items-center justify-center border border-dashed border-line-2">
@@ -66,17 +81,16 @@ export function BatchPanel({ mode = "image-set" }: { mode?: "image-set" | "folde
               <UploadCloud size={12} aria-hidden />
               {mode === "folder" ? "Browse folder" : "Browse files"}
             </button>
-            <span className="text-2xs text-ink-3">or drag and drop</span>
+            <span className="text-2xs text-ink-3">or drag and drop · or paste (Ctrl+V)</span>
           </div>
           <input
             ref={inputRef}
             type="file"
             multiple
             {...(mode === "folder" ? ({ webkitdirectory: "", directory: "" } as Record<string, string>) : {})}
-            accept=".png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff"
             className="sr-only"
             onChange={(event) => {
-              handleFiles(event.target.files);
+              handleFiles(event.target.files ? Array.from(event.target.files) : []);
               event.target.value = "";
             }}
             aria-label={mode === "folder" ? "Select inspection folder" : "Add inspection images"}
