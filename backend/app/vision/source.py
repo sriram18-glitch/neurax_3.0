@@ -104,8 +104,14 @@ def create_source(
     source_id = f"src_{uuid.uuid4().hex[:10]}"
     base = _sources_dir(sources_base)
     record = create_batch(uploaded, None, batches_base=base)
-    save_batch_raw(record["batch_id"], uploaded, None, batches_base=base)
+    # unify identity: raw files and the record live under the source id
+    orphan_batch_id = record["batch_id"]
+    record["batch_id"] = source_id
     record["source_id"] = source_id
+    save_batch_raw(source_id, uploaded, None, batches_base=base)
+    orphan_path = base / f"{orphan_batch_id}.json"
+    if orphan_path.exists():
+        orphan_path.unlink()
     record["source_type"] = source_type
     record["type_label"] = TYPE_LABELS[source_type]
     record["display_name"] = safe_display_name(display_name, source_type)
@@ -328,6 +334,13 @@ def inspect_source(source_id: str, model, *, sources_base: Path | None = None) -
     return inspect_batch(source_id, model, batches_base=base)
 
 
+def mark_source_inspecting(source_id: str, sources_base: Path | None = None) -> dict:
+    """Flip a validated source to 'inspecting' synchronously (pollable progress)."""
+    from .batch import mark_inspecting
+
+    return mark_inspecting(source_id, batches_base=_sources_dir(sources_base))
+
+
 def source_quality(record: dict) -> dict | None:
     return record.get("quality")
 
@@ -414,7 +427,7 @@ class SourceStream:
             self.session_started_at = None
             record["stream"] = {"cursor": 0, "processed": 0, "running": False, "history": []}
             _save(record, self.sources_base)
-            return self.status()
+            return self._status_locked()
 
     def clear_source(self) -> dict:
         with self._lock:

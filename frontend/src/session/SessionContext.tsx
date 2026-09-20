@@ -651,6 +651,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         const record = await api.createSource(files, sourceType, displayName);
         dispatch({ type: "batch", batch: record });
         dispatch({ type: "current_source", source: record });
+        await api.sourceActivate(record.source_id).catch(() => undefined);
         await refreshSources();
         await refreshStream();
         return record;
@@ -669,6 +670,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       const record = await api.createDemoSource();
       dispatch({ type: "batch", batch: record });
       dispatch({ type: "current_source", source: record });
+      await api.sourceActivate(record.source_id).catch(() => undefined);
       await refreshSources();
       await refreshStream();
       return record;
@@ -686,6 +688,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         const record = await api.createBundledDemoSource(name);
         dispatch({ type: "batch", batch: record });
         dispatch({ type: "current_source", source: record });
+        await api.sourceActivate(record.source_id).catch(() => undefined);
         await refreshSources();
         await refreshStream();
         return record;

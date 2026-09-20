@@ -9,6 +9,7 @@ reported as unavailable.
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from pathlib import Path
 
@@ -275,6 +276,7 @@ def train_vision(dataset_id: str) -> dict:
 
 
 _VISION_MODEL: VisionModel | None = None
+_VISION_PROFILE_CACHE: dict = {"at": 0.0, "payload": None}
 
 
 def _get_vision_model() -> VisionModel:
@@ -284,17 +286,31 @@ def _get_vision_model() -> VisionModel:
     return _VISION_MODEL
 
 
+def _vision_dataset_available() -> bool:
+    """Cheap, cached demo-dataset availability. Never scans thousands of files
+    on every request - the profile is cached for 60 seconds."""
+    now = time.time()
+    if now - _VISION_PROFILE_CACHE["at"] > 60 or _VISION_PROFILE_CACHE["payload"] is None:
+        try:
+            payload = profile_image_directory(VISION_DATASET_DIR) if VISION_DATASET_DIR.exists() else None
+        except Exception:  # noqa: BLE001 - availability must never block status
+            payload = None
+        _VISION_PROFILE_CACHE["payload"] = payload
+        _VISION_PROFILE_CACHE["at"] = now
+    payload = _VISION_PROFILE_CACHE["payload"]
+    return bool(payload and payload["image_count"] > 0)
+
+
 @app.get("/api/vision/status")
 def vision_model_status() -> dict:
     model = _get_vision_model()
-    dataset = profile_image_directory(VISION_DATASET_DIR) if VISION_DATASET_DIR.exists() else None
     if not model.available:
         return {
             "status": "NOT_TRAINED",
             "model_available": False,
             "reason": "No vision model has been trained yet.",
             "dataset_dir": str(VISION_DATASET_DIR),
-            "dataset_available": bool(dataset and dataset["image_count"] > 0),
+            "dataset_available": _vision_dataset_available(),
             "requirements": {
                 "needs": "Class-folder image dataset with a normal/ class for PASS decisions.",
                 "minimum": "2+ classes with a reasonable number of images per class.",
@@ -1304,6 +1320,15 @@ def inspection_sources_start(source_id: str) -> dict:
         raise _stream_error(error) from error
 
 
+@app.post("/api/inspection/sources/{source_id}/activate")
+def inspection_sources_activate(source_id: str) -> dict:
+    """Activate the source for the production stream WITHOUT starting it."""
+    try:
+        return STREAM.set_source(source_id)
+    except SourceError as error:
+        raise _source_error(error) from error
+
+
 @app.post("/api/inspection/sources/{source_id}/pause")
 def inspection_sources_pause(source_id: str) -> dict:
     return STREAM.pause()
@@ -1335,11 +1360,15 @@ def inspection_sources_inspect(source_id: str) -> dict:
     """Run the real pipeline over every valid image in the source (batch-style)."""
     import threading
 
+    from app.vision.source import mark_source_inspecting
+
     record = get_source(source_id)
     if record is None:
         raise _source_error(SourceError("SOURCE_NOT_FOUND", f"Source '{source_id}' does not exist.", None))
     if record["status"] in {"inspecting", "complete"} and record.get("results"):
         return record
+    # flip to inspecting synchronously so the UI polls real progress
+    mark_source_inspecting(source_id)
 
     def run() -> None:
         try:

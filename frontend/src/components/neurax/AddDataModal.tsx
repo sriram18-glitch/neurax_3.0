@@ -12,11 +12,13 @@ export function AddDataModal({
   onImage,
   onImageSet,
   onFolder,
+  onDemoSource,
 }: {
   onClose: () => void;
   onImage: () => void;
   onImageSet: () => void;
   onFolder: () => void;
+  onDemoSource: () => void;
 }) {
   const { demoSources, createBundledDemoSource, sourceBusy } = useSession();
   const options = [
@@ -72,7 +74,9 @@ export function AddDataModal({
                   key={source.name}
                   type="button"
                   disabled={sourceBusy}
-                  onClick={() => void createBundledDemoSource(source.name)}
+                  onClick={() => {
+                    void createBundledDemoSource(source.name).then(onDemoSource);
+                  }}
                   className="flex flex-col gap-1.5 border border-line/60 bg-panel/70 px-3 py-3 text-left transition-colors hover:border-cyan/50 hover:bg-panel-2/70 disabled:opacity-40"
                 >
                   <span className="flex items-center gap-2">

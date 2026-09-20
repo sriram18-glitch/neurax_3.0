@@ -321,6 +321,8 @@ export const api = {
 
   sourceStart: (sourceId: string) => request<StreamStatus>(`/api/inspection/sources/${sourceId}/start`, { method: "POST" }),
 
+  sourceActivate: (sourceId: string) => request<StreamStatus>(`/api/inspection/sources/${sourceId}/activate`, { method: "POST" }),
+
   sourceNext: (sourceId: string) => request<StreamNextResponse>(`/api/inspection/sources/${sourceId}/next`, { method: "POST" }),
 
   sourceReset: (sourceId: string) => request<StreamStatus>(`/api/inspection/sources/${sourceId}/reset`, { method: "POST" }),

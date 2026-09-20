@@ -349,6 +349,10 @@ function Workspace() {
           onImage={() => openAddData({ view: "inspection", mode: "single" })}
           onImageSet={() => openAddData({ view: "inspection", mode: "imageset" })}
           onFolder={() => openAddData({ view: "inspection", mode: "folder" })}
+          onDemoSource={() => {
+            setAddDataOpen(false);
+            setView("inspection");
+          }}
         />
       )}
     </div>
