@@ -3,7 +3,15 @@ import { ChevronDown, FolderOpen, RefreshCw, RotateCcw, ScanSearch, Upload } fro
 
 import { useSession } from "../session/SessionContext";
 
-export function CommandBar({ onUploadClick, onAddInspectionData }: { onUploadClick: () => void; onAddInspectionData: () => void }) {
+export function CommandBar({
+  onUploadClick,
+  onAddInspectionData,
+  onDatasetSelected,
+}: {
+  onUploadClick: () => void;
+  onAddInspectionData: () => void;
+  onDatasetSelected?: () => void;
+}) {
   const { contract, datasets, datasetId, loadDataset, busy, refreshDatasets, refreshVision, backendOnline, visionStatus, reset, currentSource } =
     useSession();
   const [open, setOpen] = useState(false);
@@ -60,6 +68,7 @@ export function CommandBar({ onUploadClick, onAddInspectionData }: { onUploadCli
                   onClick={() => {
                     setOpen(false);
                     void loadDataset(dataset.dataset_id);
+                    onDatasetSelected?.();
                   }}
                   className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-xs transition-colors hover:bg-panel-2 ${
                     dataset.dataset_id === datasetId ? "bg-cyan/5 text-cyan" : "text-ink-2"

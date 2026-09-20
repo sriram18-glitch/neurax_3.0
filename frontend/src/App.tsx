@@ -1,6 +1,6 @@
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { useCallback, useState } from "react";
-import { FolderPlus, History, LayoutDashboard, Play, ScanSearch, Square, Workflow } from "lucide-react";
+import { useCallback, useRef, useState } from "react";
+import { FolderPlus, History, LayoutDashboard, Play, ScanSearch, Square, UploadCloud, Workflow } from "lucide-react";
 
 import { CommandBar } from "./components/CommandBar";
 import { CommandCenter } from "./components/CommandCenter";
@@ -194,7 +194,11 @@ function Workspace() {
 
   return (
     <div className="flex h-screen min-h-0 flex-col">
-      <CommandBar onUploadClick={() => setUploadOpen(true)} onAddInspectionData={() => setAddDataOpen(true)} />
+      <CommandBar
+          onUploadClick={() => setUploadOpen(true)}
+          onAddInspectionData={() => setAddDataOpen(true)}
+          onDatasetSelected={() => setView("process")}
+        />
       <nav className="flex items-stretch overflow-x-auto border-b border-line bg-bg-2/40 px-1 sm:px-2" aria-label="Primary navigation">
         {VIEWS.map(({ id, label, icon: Icon }, index) => (
           <button
@@ -362,6 +366,7 @@ function Workspace() {
 function UploadModal({ onClose }: { onClose: () => void }) {
   const { uploadFile, busy } = useSession();
   const [dragging, setDragging] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-6" role="dialog" aria-modal="true">
       <div
@@ -386,12 +391,37 @@ function UploadModal({ onClose }: { onClose: () => void }) {
           The backend runs the full process pipeline: profiling, cleaning, ML models, root cause, bottleneck and
           recommendations.
         </p>
-        <div className="mt-5 flex items-center justify-between gap-3">
-          <p className="font-mono text-2xs text-ink-3">{busy ?? ""}</p>
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="btn-primary !px-3 !py-1.5"
+              onClick={() => inputRef.current?.click()}
+              disabled={Boolean(busy)}
+            >
+              <UploadCloud size={12} aria-hidden />
+              Browse files
+            </button>
+            <p className="font-mono text-2xs text-ink-3">{busy ?? ""}</p>
+          </div>
           <button type="button" className="btn-ghost" onClick={onClose} disabled={Boolean(busy)}>
             Cancel
           </button>
         </div>
+        <input
+          ref={inputRef}
+          type="file"
+          className="sr-only"
+          accept=".csv,.txt,.tsv,.mat,.xls,.xlsx,.xlsm,.zip"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) {
+              void uploadFile(file).then(onClose);
+            }
+            event.target.value = "";
+          }}
+          aria-label="Upload process dataset file"
+        />
       </div>
     </div>
   );
