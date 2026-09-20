@@ -41,6 +41,12 @@ CLASS_LIKE_PATTERN = re.compile(
 )
 IMAGE_COLUMN_PATTERN = re.compile(r"(image|img|photo|picture)[_\s]*(path|file|url|id)?$", re.I)
 THROUGHPUT_NAMES = re.compile(r"parts per hour|total parts|entities out|totalproducts|throughput", re.I)
+# QC / inspection-vocabulary roles (generic, never dataset-specific):
+# defect/fault/scrap/rework/reject/pass/fail counts are output targets;
+# units inspected/tested/processed are volume predictors.
+QC_RESPONSE_NAMES = re.compile(r"defect|fault|scrap|rework|reject(ed)?|passed|failed|accept(ed)?|ok\b", re.I)
+QC_PREDICTOR_NAMES = re.compile(r"units?[_ ]?(inspected|tested|processed|produced|checked|sampled|reviewed)", re.I)
+QC_DATE_NAMES = re.compile(r"inspection[_ ]?date|qc[_ ]?date|date|period|week|month\b|shift", re.I)
 
 
 def _py(value: Any) -> Any:
@@ -107,12 +113,24 @@ def classify_column(name: str, series: pd.Series) -> tuple[str, str | None, str 
             series = converted
             nonnull = converted
 
+    if QC_DATE_NAMES.search(low):
+        try:
+            pd.to_datetime(nonnull.head(50), errors="raise")
+            return "timestamp", None, None
+        except (ValueError, TypeError):
+            pass
+
     if THROUGHPUT_NAMES.search(low):
         return "response_candidate", None, None
 
     station, metric = _station_metric(name)
     if metric:
         return "process_metric", station, metric
+
+    if QC_RESPONSE_NAMES.search(low) and pd.api.types.is_numeric_dtype(series):
+        return "response_candidate", None, None
+    if QC_PREDICTOR_NAMES.search(low) and pd.api.types.is_numeric_dtype(series):
+        return "input_factor", None, None
 
     if "predictor" in low:
         return "input_factor", None, None
